@@ -58,6 +58,7 @@ CALIB_JOG = "--calib-jog" in sys.argv
 JOG_HISTORY = _argv_value("--jog-history",
                           os.path.join(WS_ROOT, "logs", "jog_calib_history.jsonl"))
 JOG_STEP_MM = _argv_float("--jog-step-mm", 5.0)
+JOG_PITCH_STEP_DEG = _argv_float("--jog-pitch-step-deg", 1.0)
 
 # 准备点 — 安全中间位姿，MoveL 的可靠起点
 PREP_RPYXYZ = (0.0, -0.094, 0.0, 0.2, 0.0, 0.3)
@@ -341,7 +342,8 @@ def main():
             calib_cfg = {**hand_cfg, "offset_xyz": grasp_common.load_offset_xyz()}
             res = jog_manual.jog_manual_stage(
                 z1, np.concatenate([rpy, p_flange]), grasp_meta,
-                calib_cfg, JOG_HISTORY, step_mm=JOG_STEP_MM)
+                calib_cfg, JOG_HISTORY, step_mm=JOG_STEP_MM,
+                pitch_step_deg=JOG_PITCH_STEP_DEG)
             if res == "abort":
                 print("\n[标定] 已中止,回零后退出...")
                 raise KeyboardInterrupt

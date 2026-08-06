@@ -31,6 +31,11 @@ KEYMAP = {
     "e": (2, -1),   # -Z (下)
 }
 
+# R/F → 绕法兰中心俯仰:直接改命令 rpy 的 pitch 分量(下标1),xyz 不动。
+# +pitch = 指尖下压(接近方向下转), −pitch = 指尖上抬。方向反了改这里即可。
+PITCH_KEYMAP = {"r": +1, "f": -1}
+PITCH_STEP_DEG_DEFAULT = 1.0   # 俯仰步长 (°),--jog-pitch-step-deg / --pitch-step-deg 可覆盖
+
 STEP_SIZES_MM = [2.0, 5.0, 10.0]
 
 
@@ -41,6 +46,7 @@ def _step_index(step):
 HELP = """\
   人工微调 (基座系平移, 保持朝向):
     w/s  前/后 (+X/−X)    a/d  左/右 (+Y/−Y)    q/e  上/下 (+Z/−Z)
+    r/f  俯仰 +/− (绕法兰中心改 pitch: r=指尖下压, f=指尖上抬)
     空格 记录本次调整并继续抓取    回车 不记录继续抓取
     [+]/[-] 步长切换 (2/5/10 mm)    [?]/[h] 本帮助
     Esc / Ctrl+C 中止 (有调整会补记一条)
@@ -109,12 +115,17 @@ def write_record(history_path, rec):
     with open(history_path, "a") as f:
         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
     off = rec["offset"]["xyz"]
-    print(f"  [记录] 已写入 {history_path}  offset.xyz=[{', '.join(f'{v*1000:+.0f}mm' for v in off)}]",
-          flush=True)
+    msg = f"  [记录] 已写入 {history_path}  offset.xyz=" \
+          f"[{', '.join(f'{v*1000:+.0f}mm' for v in off)}]"
+    off_rpy = rec["offset"]["rpy"]
+    if any(abs(v) > 1e-6 for v in off_rpy):
+        msg += f"  offset.rpy=[{', '.join(f'{v*180.0/np.pi:+.1f}°' for v in off_rpy)}]"
+    print(msg, flush=True)
 
 
 def jog_manual_stage(z1, target_pose, grasp_meta, cfg,
-                     history_path, step_mm=5.0, dry_run=False):
+                     history_path, step_mm=5.0,
+                     pitch_step_deg=PITCH_STEP_DEG_DEFAULT, dry_run=False):
     """到达目标抓取点后的人工微调循环。
 
     参数
@@ -123,6 +134,7 @@ def jog_manual_stage(z1, target_pose, grasp_meta, cfg,
     target_pose : (6,) 命令抓取位姿 [r, p, y, x, y, z](基座系)
     grasp_meta : dict,含 grasp_json/grasp_type/score/p_cam/used_network 等
     cfg : dict,含 hand_mount_z/mount_yaw_deg/offset_xyz 等(写入记录供分析)
+    pitch_step_deg : 俯仰步长 (°),r/f 每按一次改 base[1] 这么多度
 
     返回 "continue"(空格/回车:继续正常抓取)或 "abort"(Esc/Ctrl+C)。
     dry_run=True 只打印按键→命令,不移动机械臂、不写文件。
@@ -148,7 +160,8 @@ def jog_manual_stage(z1, target_pose, grasp_meta, cfg,
     print(" 人工微调 — 对准物体后按空格记录 (Esc/Ctrl+C 中止)")
     print("=" * 64)
     print(HELP)
-    print(f"  初始目标: {_pose_dict(target_pose)['xyz']}  步长={step:.0f}mm\n", flush=True)
+    print(f"  初始目标: {_pose_dict(target_pose)['xyz']}  步长={step:.0f}mm  "
+          f"俯仰步长={pitch_step_deg:.1f}°\n", flush=True)
 
     try:
         while True:
@@ -178,6 +191,24 @@ def jog_manual_stage(z1, target_pose, grasp_meta, cfg,
                           f"{'+' if sign > 0 else '-'} {step:.0f}mm  →  命令位移"
                           f"[{cmd_mm[0]:+.1f},{cmd_mm[1]:+.1f},{cmd_mm[2]:+.1f}]mm  实际位移"
                           f"[{act_mm[0]:+.1f},{act_mm[1]:+.1f},{act_mm[2]:+.1f}]mm", flush=True)
+
+            elif ch in PITCH_KEYMAP:
+                sign = PITCH_KEYMAP[ch]
+                delta = sign * pitch_step_deg * np.pi / 180.0   # 度 → 弧度
+                base[1] += delta                                # 绕法兰中心改 pitch,xyz 不动
+                jogged = True
+                if dry_run:
+                    print(f"  [jog] pitch {'+' if sign > 0 else '-'}{pitch_step_deg:.1f}°  →  "
+                          f"rpy=[{base[0]:.3f}, {base[1]:.3f}, {base[2]:.3f}]", flush=True)
+                else:
+                    z1.movej(base)
+                    time.sleep(0.15)           # 等伺服收敛
+                    actual = z1.getpose()
+                    act_deg = (actual[1] - prev_actual[1]) * 180.0 / np.pi
+                    prev_actual = actual
+                    print(f"  [jog] pitch {'+' if sign > 0 else '-'}{pitch_step_deg:.1f}°  →  "
+                          f"命令pitch={base[1] * 180.0 / np.pi:+.2f}°  "
+                          f"实际Δ={act_deg:+.2f}°", flush=True)
 
             elif ch == " ":
                 after = base.copy()            # 记录命令系最终位姿(offset=操作员调整量)
@@ -231,7 +262,9 @@ def main():
         description="抓取偏差标定 — 键盘微调自测(--dry-run, 不动机械臂)")
     ap.add_argument("--dry-run", action="store_true",
                     help="纯键盘自测:打印按键→命令,不移动机械臂、不写文件")
-    ap.add_argument("--step-mm", type=float, default=5.0, help="初始步长 (mm)")
+    ap.add_argument("--step-mm", type=float, default=5.0, help="初始平移步长 (mm)")
+    ap.add_argument("--pitch-step-deg", type=float, default=PITCH_STEP_DEG_DEFAULT,
+                    help="俯仰步长 (度, r/f 每按一次)")
     args = ap.parse_args()
 
     if not args.dry_run:
@@ -247,7 +280,8 @@ def main():
                           "orient_deviation_thresh_deg": 90.0},
                      history_path=os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                                "..", "logs", "jog_calib_history.jsonl"),
-                     step_mm=args.step_mm, dry_run=True)
+                     step_mm=args.step_mm,
+                     pitch_step_deg=args.pitch_step_deg, dry_run=True)
     return 0
 
 
