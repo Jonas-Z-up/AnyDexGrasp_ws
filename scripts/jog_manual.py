@@ -11,6 +11,7 @@
 import argparse
 import json
 import os
+import select
 import sys
 import termios
 import time
@@ -37,6 +38,13 @@ PITCH_KEYMAP = {"r": +1, "f": -1}
 PITCH_STEP_DEG_DEFAULT = 1.0   # 俯仰步长 (°),--jog-pitch-step-deg / --pitch-step-deg 可覆盖
 
 STEP_SIZES_MM = [2.0, 5.0, 10.0]
+
+# 可打断下降:步进 MoveJ 下降的默认步长 (mm) 与按键轮询间隔 (s)
+DESCEND_STEP_MM_DEFAULT = 10.0
+DESCEND_POLL_S = 0.05
+# 空格/Esc 暂停下降;Ctrl+C 不在此列——cbreak 保留 ISIG,会以 SIGINT 中断程序(编排器
+# except KeyboardInterrupt → 回零下电)。轮询分支对 \x03 字节另有兜底 raise。
+DESCEND_INTERRUPT_KEYS = ("\x1b", " ")
 
 
 def _step_index(step):
@@ -123,9 +131,72 @@ def write_record(history_path, rec):
     print(msg, flush=True)
 
 
+def descend_interruptible(z1, rpy, xyz_start, xyz_end,
+                          step_mm=DESCEND_STEP_MM_DEFAULT,
+                          interrupt_keys=DESCEND_INTERRUPT_KEYS,
+                          poll_s=DESCEND_POLL_S, dry_run=False):
+    """从 xyz_start 沿直线步进 MoveJ 下降到 xyz_end (保持 rpy),期间轮询键盘。
+
+    参数
+    ----
+    z1 : Z1Server 或 None(dry_run 时 None)
+    rpy : (3,) 保持的朝向
+    xyz_start / xyz_end : (3,) 起止位置(一般只差 z)
+    step_mm : 每步下降高度 (mm)
+    interrupt_keys : 命中即中断下降的按键集合 (默认 Esc/Space/Ctrl+C)
+
+    返回 (interrupted, pose):
+      interrupted=True  → 人工按下中断键, pose = 当前已到达的命令位姿(可作接管基准)
+      interrupted=False → 走完下降, pose = end_pose
+    dry_run=True 只打印,不移动机械臂。
+    """
+    start = np.concatenate([_arr(rpy), _arr(xyz_start)])
+    end = np.concatenate([_arr(rpy), _arr(xyz_end)])
+    dist = float(np.linalg.norm(end[3:6] - start[3:6]))
+    step = float(step_mm) / 1000.0
+    n = max(int(np.ceil(dist / step)), 1)
+
+    fd = sys.stdin.fileno()
+    is_tty = sys.stdin.isatty()
+    old = None
+    if is_tty:
+        # cbreak 式: 关 ICANON|ECHO,保留 OPOST → 后台 Z1 打印仍正常换行不错乱
+        old = termios.tcgetattr(fd)
+        new = termios.tcgetattr(fd)
+        new[3] &= ~(termios.ICANON | termios.ECHO)
+        termios.tcsetattr(fd, termios.TCSADRAIN, new)
+    try:
+        for i in range(1, n + 1):
+            frac = i / n
+            pose = start + (end - start) * frac
+            if not dry_run:
+                z1.movej(pose)
+            else:
+                print(f"  [descend] z={pose[5]:.3f}", flush=True)
+            if is_tty:
+                ready, _, _ = select.select([sys.stdin], [], [], poll_s)
+                if ready:
+                    ch = sys.stdin.read(1)
+                    if ch == "\x03":
+                        # 正常情况 cbreak 保留 ISIG,Ctrl+C 以 SIGINT 到达并被编排器
+                        # except KeyboardInterrupt 捕获→回零;这里兜底:若终端模式被改
+                        # 导致 \x03 以字节到达,仍按"中断程序"处理,绝不当作暂停。
+                        raise KeyboardInterrupt
+                    if ch in interrupt_keys:
+                        print(f"  [下降] 已中断(键 {ch!r}),停在 z={pose[5]:.3f}",
+                              flush=True)
+                        return True, pose
+    finally:
+        if old is not None:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
+    print(f"  [下降] 完成,z={end[5]:.3f}", flush=True)
+    return False, end
+
+
 def jog_manual_stage(z1, target_pose, grasp_meta, cfg,
                      history_path, step_mm=5.0,
-                     pitch_step_deg=PITCH_STEP_DEG_DEFAULT, dry_run=False):
+                     pitch_step_deg=PITCH_STEP_DEG_DEFAULT,
+                     record=True, dry_run=False):
     """到达目标抓取点后的人工微调循环。
 
     参数
@@ -135,6 +206,7 @@ def jog_manual_stage(z1, target_pose, grasp_meta, cfg,
     grasp_meta : dict,含 grasp_json/grasp_type/score/p_cam/used_network 等
     cfg : dict,含 hand_mount_z/mount_yaw_deg/offset_xyz 等(写入记录供分析)
     pitch_step_deg : 俯仰步长 (°),r/f 每按一次改 base[1] 这么多度
+    record : False 时不写标定历史(供"下降被打断→人工接管"用,避免污染标定数据)
 
     返回 "continue"(空格/回车:继续正常抓取)或 "abort"(Esc/Ctrl+C)。
     dry_run=True 只打印按键→命令,不移动机械臂、不写文件。
@@ -212,14 +284,17 @@ def jog_manual_stage(z1, target_pose, grasp_meta, cfg,
 
             elif ch == " ":
                 after = base.copy()            # 记录命令系最终位姿(offset=操作员调整量)
-                rec = build_record(target_pose, before, after, grasp_meta, cfg)
-                if dry_run:
-                    print("  [dry-run] 将写入记录(此处仅预览):")
-                    print(json.dumps(rec, ensure_ascii=False, indent=2), flush=True)
+                if record:
+                    rec = build_record(target_pose, before, after, grasp_meta, cfg)
+                    if dry_run:
+                        print("  [dry-run] 将写入记录(此处仅预览):")
+                        print(json.dumps(rec, ensure_ascii=False, indent=2), flush=True)
+                    else:
+                        write_record(history_path, rec)
+                    recorded = True
+                    print("  [记录] 已记录,继续抓取。", flush=True)
                 else:
-                    write_record(history_path, rec)
-                recorded = True
-                print("  [记录] 已记录,继续抓取。", flush=True)
+                    print("  [接管] 位置已确认,继续。", flush=True)
                 return "continue"
 
             elif ch in ("\r", "\n"):
@@ -240,7 +315,7 @@ def jog_manual_stage(z1, target_pose, grasp_meta, cfg,
                 print(HELP, flush=True)
 
             elif ch in ("\x1b", "\x03", "\x04"):
-                if jogged and not recorded and not dry_run:
+                if record and jogged and not recorded and not dry_run:
                     after = base.copy()
                     rec = build_record(target_pose, before, after, grasp_meta, cfg)
                     write_record(history_path, rec)
@@ -265,10 +340,25 @@ def main():
     ap.add_argument("--step-mm", type=float, default=5.0, help="初始平移步长 (mm)")
     ap.add_argument("--pitch-step-deg", type=float, default=PITCH_STEP_DEG_DEFAULT,
                     help="俯仰步长 (度, r/f 每按一次)")
+    ap.add_argument("--descend-step-mm", type=float, default=DESCEND_STEP_MM_DEFAULT,
+                    help="可打断下降的每步高度 (mm)")
+    ap.add_argument("--descend-dry-run", action="store_true",
+                    help="下降自测(不动机械臂):打印每步 z,按 Esc/Space 可验证中断")
     args = ap.parse_args()
 
+    if args.descend_dry_run:
+        print("下降自测(dry-run, 不动机械臂)。按 Esc/Space 验证中断。")
+        interrupted, pose = descend_interruptible(
+            z1=None,
+            rpy=np.array([0.0, 0.665, 0.0]),
+            xyz_start=np.array([0.30, 0.0, 0.52]),
+            xyz_end=np.array([0.30, 0.0, 0.40]),
+            step_mm=args.descend_step_mm, dry_run=True)
+        print(f"  结果: interrupted={interrupted} pose={pose.round(3).tolist()}")
+        return 0
+
     if not args.dry_run:
-        ap.error("本脚本仅支持 --dry-run;真机微调请通过 anydex_eih_grasp.py --calib-jog 使用。")
+        ap.error("本脚本仅支持 --dry-run / --descend-dry-run;真机微调请通过 anydex_eih_grasp.py --calib-jog 使用。")
 
     print("键盘自测(dry-run, 不动机械臂)。")
     jog_manual_stage(z1=None, target_pose=np.array([0.0, 0.665, 0.0, 0.30, 0.0, 0.40]),

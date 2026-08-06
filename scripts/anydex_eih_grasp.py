@@ -20,6 +20,7 @@ import time
 import numpy as np
 
 import grasp_common
+import jog_manual
 
 # ── 手控制 ──────────────────────────────────────────────────
 USE_HAND = "--no-hand" not in sys.argv
@@ -59,6 +60,10 @@ JOG_HISTORY = _argv_value("--jog-history",
                           os.path.join(WS_ROOT, "logs", "jog_calib_history.jsonl"))
 JOG_STEP_MM = _argv_float("--jog-step-mm", 5.0)
 JOG_PITCH_STEP_DEG = _argv_float("--jog-pitch-step-deg", 1.0)
+JOG_DESCEND_STEP_MM = _argv_float("--jog-descend-step-mm", 10.0)  # 可打断下降每步高度 (mm)
+
+# 丢弃后松手 → 自动回零下电的等待秒数 (松手后给操作者看物体掉落的时间)
+DROP_SETTLE_S = _argv_float("--drop-settle-s", 3.0)
 
 # 准备点 — 安全中间位姿，MoveL 的可靠起点
 PREP_RPYXYZ = (0.0, -0.094, 0.0, 0.2, 0.0, 0.3)
@@ -289,7 +294,6 @@ def main():
             return np.array([rpy[0], rpy[1], rpy[2], xyz[0], xyz[1], xyz[2]])
 
         approach = _pose(rpy, p_flange + np.array([0, 0, APPROACH_Z]))
-        grasp_target = _pose(rpy, p_flange)
         lift_target = _pose(rpy, p_flange + np.array([0, 0, LIFT_Z]))
         drop = np.array(DROP_RPYXYZ, dtype=float)
         grasp_type = int(grasp["grasp_type"])
@@ -316,19 +320,31 @@ def main():
             rpy = target["rpy"]
             p_flange = target["p_flange"]
             approach = _pose(rpy, p_flange + np.array([0, 0, APPROACH_Z]))
-            grasp_target = _pose(rpy, p_flange)
             lift_target = _pose(rpy, p_flange + np.array([0, 0, LIFT_Z]))
             z1.movej(approach)
 
         if hand is not None:
             hand.open()                        # 张开手指
+            hand.preshape(grasp_type)          # 空中预塑形(含拇指内旋),避免低空旋转撞桌
 
-        print(f"[执行] Phase 2b: MoveJ → 抓取点")
-        z1.movej(grasp_target)
+        print(f"[执行] Phase 2b: 下降 {APPROACH_Z*100:.0f}cm → 抓取点 "
+              f"(Space/Esc 暂停接管人工微调)")
+        interrupted, cur_pose = jog_manual.descend_interruptible(
+            z1, rpy, p_flange + np.array([0, 0, APPROACH_Z]), p_flange,
+            step_mm=JOG_DESCEND_STEP_MM)
+        if interrupted:
+            print("\n[接管] 已暂停自动下降。请用 w/s/a/d/q/e + r/f 人工微调,"
+                  "回车确认后继续闭合。")
+            res = jog_manual.jog_manual_stage(
+                z1, cur_pose, {}, {}, JOG_HISTORY,
+                step_mm=JOG_STEP_MM, pitch_step_deg=JOG_PITCH_STEP_DEG,
+                record=False)
+            if res == "abort":
+                print("\n[接管] 已中止,回零后退出...")
+                raise KeyboardInterrupt
 
         # ── 抓取偏差标定:人工微调 + 记录 (--calib-jog) ────────────
         if CALIB_JOG:
-            import jog_manual
             print("\n[标定] 已到达抓取点。请用 w/s/a/d/q/e 微调对准物体,空格记录后继续。")
             grasp_meta = {
                 "grasp_json": DEFAULT_GRASP_JSON,
@@ -378,10 +394,10 @@ def main():
 
         print(f"\n✅ 抓取完成，物体已丢弃。")
 
-        # 方案 B：不直接下电，机械臂保持上电（不掉力）等待操作员确认。
-        # 操作员取走物体后按回车才进入安全下电（finally 里先回零再断电）。
-        print("[下电] 机械臂保持上电不掉力，请确认物体已安全移走。")
-        input(">>> 确认安全，按回车下电退出 (Ctrl+C 取消，回零后断电): ")
+        # 丢弃后自动回零:松手后等 DROP_SETTLE_S 秒(看物体掉落),然后落入 finally
+        # 自动回零下电,无需再按回车。
+        print(f"[下电] {DROP_SETTLE_S:.0f} 秒后自动回零下电 (Ctrl+C 可随时取消)...")
+        time.sleep(DROP_SETTLE_S)
 
     except KeyboardInterrupt:
         print("\n\n⚠️  用户取消，回零后退出...")

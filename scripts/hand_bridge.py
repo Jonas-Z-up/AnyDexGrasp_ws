@@ -5,7 +5,8 @@
   - broadcast: 6 电缸预塑形位姿 [ID1..5(手指0~2000), ID6(拇指旋转0~2000)]
   - close:      逐指闭合指令列表 [(motor_id, force, speed, pos), ...]
 
-GraspHand 类提供 open / close / release 接口，与 anydex_eih_grasp.py 闭环适配。
+GraspHand 类提供 open / preshape / close / release 接口，与 anydex_eih_grasp.py 闭环适配。
+preshape() 在空中(抓取点上方)广播预塑形位姿(含拇指内旋),close() 到位后只做逐指闭合。
 """
 
 import os, sys, time
@@ -146,10 +147,13 @@ class GraspHand:
         self.ctrl.action_reset()
         print("[手] 已张开")
 
-    def close(self, grasp_type):
-        """根据网络输出的抓取类型执行预塑形 + 逐指闭合。"""
+    def preshape(self, grasp_type):
+        """空中预塑形：广播到该抓取类型的预塑形位姿（含 ID6 拇指内旋）。
+
+        应在高处（抓取点上方安全距离）先执行，避免拇指内旋在低空扫到桌面。
+        之后下降到位，再调用 close() 做逐指闭合。
+        """
         if not self._connected:
-            print(f"[手] 未连接，跳过闭合 (type={grasp_type})")
             return
 
         preset = PRESHAPE_LIBRARY.get(grasp_type)
@@ -160,16 +164,31 @@ class GraspHand:
         name = preset["name"]
         bc = preset["broadcast"]
         wait_t = preset["wait"]
-        close_seq = preset["close"]
 
-        print(f"[手] 抓取 Type {grasp_type} ({name})")
+        print(f"[手] 预塑形 Type {grasp_type} ({name})")
         print(f"     预塑形 broadcast: {bc}")
-
-        # Step 1: 预塑形
         self.ctrl.send_broadcast(bc)
         time.sleep(wait_t)
+        print(f"[手] 预塑形到位")
 
-        # Step 2: 逐指闭合
+    def close(self, grasp_type):
+        """根据网络输出的抓取类型逐指闭合。
+
+        调用前需先 preshape()（空中已完成预塑形广播），这里只做逐指闭合。
+        """
+        if not self._connected:
+            print(f"[手] 未连接，跳过闭合 (type={grasp_type})")
+            return
+
+        preset = PRESHAPE_LIBRARY.get(grasp_type)
+        if preset is None:
+            print(f"[手] ⚠ 未知抓取类型 {grasp_type}，使用 Type 4 兜底")
+            preset = PRESHAPE_LIBRARY[4]
+
+        name = preset["name"]
+        close_seq = preset["close"]
+
+        print(f"[手] 闭合 Type {grasp_type} ({name})")
         for motor_id, force, speed, pos in close_seq:
             print(f"     motor {motor_id} → force={force} speed={speed} pos={pos}")
             self.ctrl.send_single_motor(motor_id, force, speed, pos)
