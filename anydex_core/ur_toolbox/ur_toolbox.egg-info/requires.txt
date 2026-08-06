@@ -1,0 +1,3 @@
+numpy
+math3d==3.4.1
+pyrealsense2

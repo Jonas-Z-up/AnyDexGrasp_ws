@@ -1,0 +1,9 @@
+numpy
+Pillow
+scipy
+tqdm
+tensorboard
+graspnetAPI
+open3d
+xlrd2
+pybullet

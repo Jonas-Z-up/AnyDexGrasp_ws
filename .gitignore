@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.o
+
+# C++ 扩展编译产物（需本地重新编译，避免提交绝对路径构建目录）
+anydex_core/pointnet2/build/
+anydex_core/knn/build/
+
+# Python 构建分发产物
+dist/
+*.egg
+*.egg-info/
+
+# 模型权重：从 AnyDexGrasp 官方仓库下载（见 README）
+logs/model/
+
+# 编辑器
+.idea/
+.vscode/
+
+# 日志/运行产物
+*.log

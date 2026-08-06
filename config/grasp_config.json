@@ -1,0 +1,47 @@
+{
+  "offset_xyz": [
+    0.1,
+    0.0,
+    0.0
+  ],
+  "pregrasp_extra_rpyxyz": [
+    0.0,
+    0.705,
+    0.0,
+    0.03,
+    0.01,
+    0.221
+  ],
+  "grasp_extra_z": 0.18,
+  "arm_speed": 0.18,
+  "grasp_steps": 12,
+  "grasp_delay": 0.05,
+  "ready_steps": 20,
+  "ready_delay": 0.08,
+  "hand_port": "/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0",
+  "hand_force": 7000,
+  "hand_speed": 1000,
+  "hand_pos": 1000,
+  "hand_grasp_ids": [
+    2,
+    3,
+    4,
+    5
+  ],
+  "hand_mount_z": 0.09,
+  "hand_fingertip_z": 0.24,
+  "mount_yaw_deg": -90.0,
+  "orient_deviation_thresh_deg": 90.0,
+  "x_range": [
+    -0.05,
+    0.65
+  ],
+  "y_range": [
+    -0.5,
+    0.5
+  ],
+  "z_range": [
+    0.12,
+    0.7
+  ]
+}

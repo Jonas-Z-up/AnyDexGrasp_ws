@@ -1,0 +1,154 @@
+#!/usr/bin/env python3
+"""AnyDexGrasp 眼在手上 — 手安装/朝向计算共享模块。
+
+统一封装自研手在 Z1 法兰上的安装参数与「网络抓取位姿 → 法兰目标位姿」的计算，
+执行器 anydex_eih_grasp.py 与预览 run_inspire_preview.py 共用，避免逻辑漂移。
+
+坐标约定
+--------
+- 网络 palm 位姿（translation / rotation_matrix）在相机坐标系，来自
+  run_inspire_preview.py 的 JSON 输出（translation = 手掌中心）。
+- palm 帧 +X = 接近方向（指尖方向）。
+- 真机确认：观测/抓取时指尖朝**前下方**（与相机同向），即手沿法兰 **+X**
+  安装（眼在手上一体化，手在法兰末端最外侧）。
+  故安装旋转 R_mount = Rx(α)：palm +X 映射到法兰 +X（同轴），Rx(α) 是绕
+  接近轴的滚转角（拇指/掌心朝向，右手手型 α=90°，需空载验证）。
+- 关键修正：执行器下发的是**法兰位姿**，而网络给的是**手掌位姿**。手装在法兰
+  末端之外 hand_mount_z 处，故：
+    指尖方向(基座系) = R_flange[:, 0]  （法兰 +X）
+    法兰位置 = 掌心 − hand_mount_z × 指尖方向
+"""
+
+import json
+import os
+
+import numpy as np
+from scipy.spatial.transform import Rotation
+
+# ── 默认安装参数（config/grasp_config.json 可覆盖）──────────────────
+DEFAULT_HAND_MOUNT_Z = 0.12        # 法兰→掌心，沿接近轴 (m)
+DEFAULT_HAND_FINGERTIP_Z = 0.24    # 法兰→指尖 (m)，用于间隙/碰撞估计
+DEFAULT_MOUNT_YAW_DEG = -90.0      # 拇指/掌心绕接近轴的方位角 α（右手手型）
+DEFAULT_DEV_THRESH_DEG = 90.0      # 网络朝向与固定朝向夹角阈值，超则回退
+
+# ── 与执行器共用的抓取常量 ────────────────────────────────────────
+FIXED_RPY = (0.0, 0.665, 0.0)     # 固定抓取朝向（兜底）
+OBSERVE_RPYXYZ = (0.0, 1.057, 0.0, 0.3, 0.0, 0.35)  # 拍照/推理位姿
+
+
+def default_config_path():
+    return os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "config", "grasp_config.json")
+
+
+def load_hand_config(path=None):
+    """从 config/grasp_config.json 读取手安装参数，缺省回退默认值。"""
+    cfg = {}
+    if path is None:
+        path = default_config_path()
+    if os.path.exists(path):
+        with open(path) as f:
+            cfg = json.load(f)
+    return {
+        "hand_mount_z": float(cfg.get("hand_mount_z", DEFAULT_HAND_MOUNT_Z)),
+        "hand_fingertip_z": float(cfg.get("hand_fingertip_z", DEFAULT_HAND_FINGERTIP_Z)),
+        "mount_yaw_deg": float(cfg.get("mount_yaw_deg", DEFAULT_MOUNT_YAW_DEG)),
+        "orient_deviation_thresh_deg": float(cfg.get(
+            "orient_deviation_thresh_deg", DEFAULT_DEV_THRESH_DEG)),
+    }
+
+
+def load_offset_xyz(path=None):
+    """从 config/grasp_config.json 读取基座系抓取位置偏移 offset_xyz，缺省 [0, 0, 0]。
+
+    用于纯水平微调（如基座 +X 前移），不改变接近轴方向，也不改变 z。
+    执行器/预览/验证共用，保证三处显示与真机一致。
+    """
+    if path is None:
+        path = default_config_path()
+    if os.path.exists(path):
+        with open(path) as f:
+            cfg = json.load(f)
+        offset = cfg.get("offset_xyz", [0.0, 0.0, 0.0])
+    else:
+        offset = [0.0, 0.0, 0.0]
+    return [float(v) for v in offset]
+
+
+def compute_R_mount(mount_yaw_deg):
+    """palm 帧 → 法兰帧 的固定安装旋转 R_mount = Rx(α)。
+
+    手沿法兰 +X 安装（指尖前下方，与相机同向），故 palm +X（接近/指尖）直接
+    映射到法兰 +X；Rx(α) 是绕接近轴的滚转角（拇指/掌心朝向，α=90° 右手手型，
+    需一次空载验证确定正负）。
+    """
+    a = np.deg2rad(mount_yaw_deg)
+    return Rotation.from_euler("x", a).as_matrix()
+
+
+def compute_grasp_target(grasp, R_c2f, t_c2f, flange_pose,
+                         hand_mount_z=None, mount_yaw_deg=None,
+                         dev_thresh_deg=None, offset_xyz=None,
+                         fixed_rpy=FIXED_RPY,
+                         force_fixed=False):
+    """网络抓取位姿（相机系）→ 法兰目标位姿（基座系）。
+
+    纯函数，便于离线单测。返回：
+        rpy         (3,) 法兰目标朝向 [roll, pitch, yaw]
+        p_flange    (3,) 法兰目标位置（已补偿安装偏移 + offset_xyz，基座系）
+        used_network bool 是否采用网络朝向（False = 回退固定朝向）
+        deviation_deg 网络朝向与固定朝向的夹角（°）
+        p_palm_base (3,) 掌心位置（基座系，已含 offset_xyz 手动偏移）
+    """
+    if hand_mount_z is None or mount_yaw_deg is None or dev_thresh_deg is None:
+        cfg = load_hand_config()
+        hand_mount_z = hand_mount_z if hand_mount_z is not None else cfg["hand_mount_z"]
+        mount_yaw_deg = mount_yaw_deg if mount_yaw_deg is not None else cfg["mount_yaw_deg"]
+        dev_thresh_deg = dev_thresh_deg if dev_thresh_deg is not None else cfg["orient_deviation_thresh_deg"]
+    if offset_xyz is None:
+        offset_xyz = load_offset_xyz()
+
+    p_palm_cam = np.asarray(grasp["translation"], dtype=float)
+    R_f2b = Rotation.from_euler("xyz", flange_pose[:3]).as_matrix()
+    t_f2b = np.asarray(flange_pose[3:6], dtype=float)
+
+    # 掌心位姿：相机 → 法兰 → 基座
+    p_palm_base = R_f2b @ (R_c2f @ p_palm_cam + t_c2f) + t_f2b
+
+    # 基座系手动偏移（config offset_xyz，如纯水平 +X 微调）：整只手平移，z 不变。
+    # 加在 p_palm_base 上，p_flange/指尖随动，三处（执行/预览/验证）保持一致。
+    p_palm_base = p_palm_base + np.asarray(offset_xyz, dtype=float)
+
+    R_mount = compute_R_mount(mount_yaw_deg)
+    R_fixed = Rotation.from_euler("xyz", fixed_rpy).as_matrix()
+
+    # 决定朝向
+    used_network = False
+    deviation_deg = 0.0
+    if not force_fixed and "rotation_matrix" in grasp:
+        R_palm = np.asarray(grasp["rotation_matrix"], dtype=float).reshape(3, 3)
+        R_flange = R_f2b @ R_c2f @ R_palm @ R_mount
+        deviation_deg = float(
+            np.abs(Rotation.from_matrix(R_flange @ R_fixed.T).magnitude()) * 180.0 / np.pi)
+        used_network = deviation_deg <= dev_thresh_deg
+        if used_network:
+            rpy = Rotation.from_matrix(R_flange).as_euler("xyz")
+            approach = R_flange[:, 0]      # 指尖方向 = 法兰 +X
+        else:
+            rpy = np.asarray(fixed_rpy, dtype=float)
+            approach = R_fixed[:, 0]
+    else:
+        rpy = np.asarray(fixed_rpy, dtype=float)
+        approach = R_fixed[:, 0]
+
+    # 安装偏移补偿：法兰位置 = 掌心 − hand_mount_z × 接近方向
+    p_flange = p_palm_base - hand_mount_z * approach
+
+    return {
+        "rpy": rpy,
+        "p_flange": p_flange,
+        "used_network": used_network,
+        "deviation_deg": float(deviation_deg),
+        "p_palm_base": p_palm_base,
+    }

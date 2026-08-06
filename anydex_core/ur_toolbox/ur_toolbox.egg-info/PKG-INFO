@@ -1,0 +1,19 @@
+Metadata-Version: 2.1
+Name: ur-toolbox
+Version: 0.1.0
+Summary: Python library to control an UR robot and other equipments
+Home-page: https://github.com/graspnet/ur_toolbox
+Author: Minghao Gou
+Author-email: gouminghao@gmail.com
+License: GNU Lesser General Public License v3
+Platform: UNKNOWN
+Classifier: Programming Language :: Python :: 3
+Classifier: Development Status :: 4 - Beta
+Classifier: Intended Audience :: Developers
+Classifier: Operating System :: OS Independent
+Classifier: Topic :: System :: Hardware :: Hardware Drivers
+Classifier: Topic :: Software Development :: Libraries :: Python Modules
+Provides: ur_toolbox
+
+UNKNOWN
+
