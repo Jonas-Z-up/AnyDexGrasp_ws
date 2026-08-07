@@ -27,7 +27,7 @@ from hand_control.controller_ub import HandController
 PRESHAPE_LIBRARY = {
     1: {  # Tip Pinch — 拇指+食指尖端捏 (来自 tip_Pinch)
         "name": "Tip Pinch",
-        "broadcast": [600, 2000, 2000, 2000, 2000, 1600],
+        "broadcast": [800, 2000, 2000, 2000, 2000, 1600],
         "wait": 1.5,
         "close": [
             (1, 2500, 1000, 400),    # 拇指
@@ -36,7 +36,7 @@ PRESHAPE_LIBRARY = {
     },
     2: {  # Ring — 拇指+食指+中指形成环 (来自 finger_2)
         "name": "Ring",
-        "broadcast": [600, 2000, 2000, 2000, 2000, 1800],
+        "broadcast": [800, 2000, 2000, 2000, 2000, 1800],
         "wait": 1.5,
         "close": [
             (1, 2500, 1000, 400),    # 拇指
@@ -46,7 +46,7 @@ PRESHAPE_LIBRARY = {
     },
     3: {  # Prismatic 3-Finger — 四指捏 (来自 finger_3)
         "name": "Prismatic 3-Finger",
-        "broadcast": [600, 2000, 2000, 2000, 2000, 1800],
+        "broadcast": [800, 2000, 2000, 2000, 2000, 1800],
         "wait": 1.5,
         "close": [
             (1, 2500, 1000, 400),    # 拇指
@@ -57,7 +57,7 @@ PRESHAPE_LIBRARY = {
     },
     4: {  # Large Diameter — 五指全合包络大直径物体
         "name": "Large Diameter",
-        "broadcast": [600, 2000, 2000, 2000, 2000, 2000],
+        "broadcast": [800, 2000, 2000, 2000, 2000, 2000],
         "wait": 1.5,
         "close": [
             (1, 2500, 1000, 400),
@@ -69,7 +69,7 @@ PRESHAPE_LIBRARY = {
     },
     5: {  # Medium Wrap — 包络抓
         "name": "Medium Wrap",
-        "broadcast": [600, 2000, 2000, 2000, 2000, 1200],  # 拇指内旋半握 1200
+        "broadcast": [800, 2000, 2000, 2000, 2000, 1200],  # 拇指内旋半握 1200
         "wait": 1.5,
         "close": [
             (1, 2500, 1000, 300),
@@ -81,7 +81,7 @@ PRESHAPE_LIBRARY = {
     },
     6: {  # Tripod — 三脚支撑抓
         "name": "Tripod",
-        "broadcast": [600, 2000, 2000, 2000, 2000, 1200],
+        "broadcast": [800, 2000, 2000, 2000, 2000, 1300],
         "wait": 1.5,
         "close": [
             (1, 2500, 1000, 400),
@@ -91,7 +91,7 @@ PRESHAPE_LIBRARY = {
     },
     7: {  # Sphere 3-Finger — 球形三指抓
         "name": "Sphere 3-Finger",
-        "broadcast": [600, 2000, 2000, 2000, 2000, 800],   # 拇指内旋深 800
+        "broadcast": [800, 2000, 2000, 2000, 2000, 900],   # 拇指内旋深 800
         "wait": 1.5,
         "close": [
             (1, 2500, 1000, 550),
@@ -101,7 +101,7 @@ PRESHAPE_LIBRARY = {
     },
     8: {  # Distal Type — 远端指节捏
         "name": "Distal Type",
-        "broadcast": [600, 2000, 2000, 2000, 2000, 2000],
+        "broadcast": [800, 2000, 2000, 2000, 2000, 2000],
         "wait": 1.5,
         "close": [
             (1, 2500, 1000, 400),

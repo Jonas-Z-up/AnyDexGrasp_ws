@@ -111,11 +111,11 @@ class HandController:
     # 0. 复位 RESET
     def action_reset(self):
         self.log("执行: 复位")
-        self.send_single_motor(1, 4000, 2000, 500)
+        self.send_single_motor(1, 4000, 2000, 1000)
         time.sleep(1)
         for i in range(2, 6):
             self.send_single_motor(i, 1500, 2000, 2000)
-        self.send_broadcast([500, 2000, 2000, 2000, 2000, 1000])
+        self.send_broadcast([1000, 2000, 2000, 2000, 2000, 0])
 
     # 1. Tip_Pinch
     def tip_Pinch(self):

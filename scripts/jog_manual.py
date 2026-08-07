@@ -55,7 +55,7 @@ HELP = """\
   人工微调 (基座系平移, 保持朝向):
     w/s  前/后 (+X/−X)    a/d  左/右 (+Y/−Y)    q/e  上/下 (+Z/−Z)
     r/f  俯仰 +/− (绕法兰中心改 pitch: r=指尖下压, f=指尖上抬)
-    空格 记录本次调整并继续抓取    回车 不记录继续抓取
+    空格 记录本次调整并继续抓取    回车 有微调会补记/没微调则跳过
     [+]/[-] 步长切换 (2/5/10 mm)    [?]/[h] 本帮助
     Esc / Ctrl+C 中止 (有调整会补记一条)
 """
@@ -298,7 +298,21 @@ def jog_manual_stage(z1, target_pose, grasp_meta, cfg,
                 return "continue"
 
             elif ch in ("\r", "\n"):
-                print("  [跳过] 不记录,继续抓取。", flush=True)
+                # 回车在有微调时也补记:抓取流程到处都是"回车确认",操作员在标定
+                # 提示下容易顺手按回车,导致微调数据被静默丢弃(实测发生过)。
+                # 只有"完全没动过"的回车才跳过,避免产生全零偏移的脏样本。
+                if record and jogged and not recorded:
+                    after = base.copy()
+                    rec = build_record(target_pose, before, after, grasp_meta, cfg)
+                    if dry_run:
+                        print("  [dry-run] 回车(有微调)将补记,此处仅预览:")
+                        print(json.dumps(rec, ensure_ascii=False, indent=2), flush=True)
+                    else:
+                        write_record(history_path, rec)
+                    recorded = True
+                    print("  [记录] 回车确认(检测到微调),已补记写入历史。", flush=True)
+                else:
+                    print("  [跳过] 不记录,继续抓取。", flush=True)
                 return "continue"
 
             elif ch in ("+", "]"):

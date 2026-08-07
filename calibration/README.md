@@ -13,15 +13,16 @@
 ### 坐标变换链
 
 ```
-相机坐标系 (网络输出)  →  法兰坐标系 (cam2flange)  →  Z1 基座坐标系 (实时查询 Z1)
+相机坐标系 (网络输出)  →  法兰坐标系 (cam2flange)  →  Z1 基座坐标系 (命令观测位姿 OBSERVE_RPYXYZ)
 ```
 
 ```python
-# anydex_eih_grasp.py 内部逻辑（cam_to_base 函数）
+# grasp_common.compute_grasp_target 内部逻辑
 # Step 1: 相机 → 法兰 (手眼标定矩阵 X)
 p_flange = R_cam2flange @ p_cam + t_cam2flange
 
-# Step 2: 法兰 → 基座 (从 Z1 SDK 实时查询当前末端位姿)
+# Step 2: 法兰 → 基座 (当前用命令观测位姿 OBSERVE_RPYXYZ 构造 R_flange2base/t_flange2base;
+#          原用 getpose() 实时查询, 因 ~40mm FK 误差已切换, 评估中)
 p_base = R_flange2base @ p_flange + t_flange2base
 ```
 

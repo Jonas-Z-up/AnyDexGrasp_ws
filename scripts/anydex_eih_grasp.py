@@ -207,6 +207,10 @@ def main():
     print("=" * 55)
     print("  AnyDexGrasp 眼在手上抓取编排器")
     print("=" * 55)
+    print(f"  [标定] 模式: {'--calib-jog 已启用' if CALIB_JOG else '未启用(不加 --calib-jog 不会记录修正数据)'}")
+    print(f"  [标定] 历史文件: {JOG_HISTORY}")
+    print(f"  [标定] 空格=记录 / 回车=有微调会补记、没微调跳过 / Esc=中止")
+    print("=" * 55)
 
     # ── Phase 1: 移动到观测位姿 ──────────────────────────
     print("\n── Phase 1: 移动到观测位姿 ──")
@@ -266,9 +270,13 @@ def main():
               f"type={grasp['grasp_type']}  "
               f"p_cam=[{p_cam[0]:.3f}, {p_cam[1]:.3f}, {p_cam[2]:.3f}]")
 
-        # 查询法兰
-        flange = z1.getpose()
-        print(f"[Z1] 法兰: r={flange[0]:.3f} p={flange[1]:.3f} y={flange[2]:.3f} "
+        # 查询法兰: 用命令观测位姿替代 getpose()
+        # verify_z1_pose.py 实测 getpose/FK 有 ~39.4±1.0mm 沿手前向的系统误差,
+        # 用它做 cam→base 会把 ~40mm 注入每个抓取(即 CLAUDE.md 的 42mm 偏移)。
+        # MoveJ 到位稳定(Test A 重复性 0mm),命令观测位姿更可靠;
+        # 预览 run_inspire_preview.py 也一直按 OBSERVE_RPYXYZ 画法兰框。
+        flange = np.array(OBSERVE_RPYXYZ, dtype=float)
+        print(f"[Z1] 法兰(命令观测位姿): r={flange[0]:.3f} p={flange[1]:.3f} y={flange[2]:.3f} "
               f"x={flange[3]:.3f} y={flange[4]:.3f} z={flange[5]:.3f}")
 
         # 计算目标：网络朝向 + 安装偏移补偿 + 偏差保护
@@ -304,24 +312,48 @@ def main():
               f"{target['p_palm_base'][2]:.3f}])")
 
         # ── 自动抓取流程 ─────────────────────────────────
+        # Phase 2a: 移动到抓取点上方。Z1 真实 IK 工作空间比粗过滤窄,网络朝向不可达
+        # 时回退固定朝向;两者都失败则逐步降低接近高度(12→8→6cm)重试——很多情况
+        # 只是接近点(竖直 +APPROACH_Z)抬太高超出 IK 可达区。全失败 = 位姿真不可达,
+        # 优雅中止(回零退出,不抛 traceback)。
         print(f"\n[执行] Phase 2a: MoveJ → 抓取点上方 {APPROACH_Z*100:.0f}cm")
-        try:
-            z1.movej(approach)
-        except Exception as e:
-            if not target["used_network"]:
-                raise
-            print(f"[执行] ⚠ 网络朝向 MoveJ 失败 ({e})，回退固定朝向重试", flush=True)
-            target = grasp_common.compute_grasp_target(
-                grasp, R_c2f, t_c2f, flange,
-                hand_cfg["hand_mount_z"], hand_cfg["mount_yaw_deg"],
-                hand_cfg["orient_deviation_thresh_deg"],
-                fixed_rpy=FIXED_RPY, force_fixed=True,
-            )
-            rpy = target["rpy"]
-            p_flange = target["p_flange"]
-            approach = _pose(rpy, p_flange + np.array([0, 0, APPROACH_Z]))
-            lift_target = _pose(rpy, p_flange + np.array([0, 0, LIFT_Z]))
-            z1.movej(approach)
+        approach_heights = [APPROACH_Z, 0.08, 0.06]
+        # 候选姿态:先网络朝向(若本轮用了网络),再固定朝向兜底
+        cands = []
+        if target["used_network"]:
+            cands.append((target, "网络朝向"))
+        t_fixed = grasp_common.compute_grasp_target(
+            grasp, R_c2f, t_c2f, flange,
+            hand_cfg["hand_mount_z"], hand_cfg["mount_yaw_deg"],
+            hand_cfg["orient_deviation_thresh_deg"],
+            fixed_rpy=FIXED_RPY, force_fixed=True,
+        )
+        cands.append((t_fixed, "固定朝向"))
+
+        moved = False
+        for az in approach_heights:
+            for t, label in cands:
+                rpy = t["rpy"]
+                p_flange = t["p_flange"]
+                approach = _pose(rpy, p_flange + np.array([0, 0, az]))
+                lift_target = _pose(rpy, p_flange + np.array([0, 0, LIFT_Z]))
+                try:
+                    z1.movej(approach)
+                    moved = True
+                    target = t
+                    break
+                except Exception as e:
+                    print(f"[执行] ⚠ {label} · 接近高 {az*100:.0f}cm MoveJ 失败 ({e})", flush=True)
+            if moved:
+                break
+
+        if not moved:
+            print("\n" + "=" * 55)
+            print("❌ 该抓取位姿超出 Z1 可达范围:网络/固定朝向在接近高度 "
+                  f"{'/'.join(f'{h*100:.0f}' for h in approach_heights)}cm 均 IK 无解。")
+            print("   请换个物体位置、或重新拍照推理、或调小 config 的抓取范围后重试。")
+            print("=" * 55)
+            return 1
 
         if hand is not None:
             hand.open()                        # 张开手指
@@ -345,7 +377,8 @@ def main():
 
         # ── 抓取偏差标定:人工微调 + 记录 (--calib-jog) ────────────
         if CALIB_JOG:
-            print("\n[标定] 已到达抓取点。请用 w/s/a/d/q/e 微调对准物体,空格记录后继续。")
+            print("\n[标定] 已到达抓取点。请用 w/s/a/d/q/e 微调对准物体。")
+            print(f"[标定] 对准后按【空格】记录(写入 {JOG_HISTORY});回车=有微调补记/没微调跳过;Esc=中止。")
             grasp_meta = {
                 "grasp_json": DEFAULT_GRASP_JSON,
                 "grasp_type": grasp_type,
