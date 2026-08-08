@@ -22,7 +22,7 @@
 p_flange = R_cam2flange @ p_cam + t_cam2flange
 
 # Step 2: 法兰 → 基座 (当前用命令观测位姿 OBSERVE_RPYXYZ 构造 R_flange2base/t_flange2base;
-#          原用 getpose() 实时查询, 因 ~40mm FK 误差已切换, 评估中)
+#          原用 getpose() 实时查询, 因 ~40mm FK 虚报误差已切换, 已确认正确不回退)
 p_base = R_flange2base @ p_flange + t_flange2base
 ```
 

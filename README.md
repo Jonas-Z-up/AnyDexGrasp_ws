@@ -79,7 +79,7 @@ python run_inspire_preview.py --visualize --collision \
 | 标定文件 | `calibration/cam2flange_current.json` | `calibration/cam2base_current.json` |
 | 变换链 | cam→flange→base (两步) | cam→base (一步) |
 | 脚本 | `anydex_eih_grasp.py` | `z1_from_anydex_preview.py` |
-| Z1 需查询 | 是（命令观测位姿；原 getpose 有 ~40mm FK 误差，已切换，评估中） | 否 |
+| Z1 需查询 | 是（命令观测位姿；getpose 有 ~40mm FK 虚报误差，已切换并确认） | 否 |
 
 
 ## 自研手控制
@@ -97,9 +97,9 @@ python validate_grasp_setup.py --target  # 打印最新 grasp 的目标位姿（
 
 ## 抓取偏差标定（人工微调 + 记录）
 
-真机发现不同抓取位姿存在程度不同的**位置偏差**。用人工示教点标定定位系统性误差来源：
+真机发现不同抓取位姿存在程度不同的**位置/朝向偏差**。用人工示教点标定定位系统性误差来源：
 到达目标抓取点后键盘微调机械臂对准物体，空格记录调整前后的位姿与偏移；
-多组数据后用分析脚本输出 `offset_xyz` / `hand_mount_z` 建议，并判断是否需要重标定手眼。
+多组数据后用分析脚本输出 `offset_xyz` / `hand_mount_z` / `offset_rpy_deg` 建议，并判断是否需要重标定手眼。
 
 ```bash
 # 1. 键盘自测（不动机械臂、不写文件）
@@ -115,8 +115,8 @@ python analyze_jog_history.py
 
 - 按键：`w/s/a/d/q/e` = 基座系前后/左右/上下微调（初始步长 5mm）；`r/f` = 俯仰 ±（绕法兰中心，默认 1°，`--jog-pitch-step-deg` 可调）；`+`/`-` = 切平移步长（2/5/10 mm）；`空格` = 记录并继续抓取；`回车` = 有微调会补记、没微调跳过；`Esc`/`Ctrl+C` = 中止（有调整会补记）。
 - 记录保存：`logs/jog_calib_history.jsonl`（可用 `--jog-history <路径>` 覆盖），每行一条 JSON 样本。
-- 分析输出：恒定偏置 → `offset_xyz` 建议；接近轴投影 → `hand_mount_z` 建议；offset 对物体深度线性拟合 → 斜率显著即指向手眼标定旋转误差（需重标定）。
-- ⚠️ 已知系统偏移：`verify_z1_pose.py` 实测 `getpose` 与命令位姿差 39.4±1.0mm（沿接近轴）。cam→base 已改用命令观测位姿（原用 getpose 有 ~40mm FK 误差），切换后目标上抬 ~35mm 致部分抓取 IK 不可达，**切换评估中**。定位工具：`python verify_z1_pose.py`（结果在 `logs/pose_verify_history.jsonl`）。
+- 分析输出：恒定偏置 → `offset_xyz` 建议；接近轴投影 → `hand_mount_z` 建议；朝向残余 → `offset_rpy_deg` 建议（pitch 为主，绕掌心中心，与 r/f 绕法兰中心不同，小角度近似）；offset 对物体深度线性拟合 → 斜率显著即指向手眼标定旋转误差（需重标定）。
+- ✅ 已知系统偏移（已闭环，2026-08-08）：①`getpose`(FK) 与命令位姿差 39.4±1.0mm 沿接近轴——真机实测 MoveJ 落点=命令位姿，getpose 是**虚报**，cam→base 用命令观测位姿已确认正确；②残余 `offset_xyz=[0.072,0,-0.085]` 实为**手眼外参错误**（相机比外参说的靠前 ~11cm 沿法兰+X）的总账补偿，根修=修正 `calibration/cam2flange_current.json` 或重标定（先查棋盘格实际边长是否 12mm）。定位工具：`python verify_z1_pose.py`（结果在 `logs/pose_verify_history.jsonl`）。
 
 ## 训练
 ```bash
