@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """抓取偏差标定 — 人工微调 + 记录。
 
-集成进 anydex_eih_grasp.py (--calib-jog):到达目标抓取点后进入键盘微调循环,
+集成进 anydex_eih_grasp_calib.py (--calib-jog):到达目标抓取点后进入键盘微调循环,
 操作员用 w/s/a/d/q/e 在基座系 XYZ 微调手臂对准物体,按空格记录调整前后的
 位姿与偏移(JSONL 历史),供 analyze_jog_history.py 分析系统性偏差。
 
@@ -375,7 +375,7 @@ def main():
         return 0
 
     if not args.dry_run:
-        ap.error("本脚本仅支持 --dry-run / --descend-dry-run;真机微调请通过 anydex_eih_grasp.py --calib-jog 使用。")
+        ap.error("本脚本仅支持 --dry-run / --descend-dry-run;真机微调请通过 anydex_eih_grasp_calib.py --calib-jog 使用。")
 
     print("键盘自测(dry-run, 不动机械臂)。")
     jog_manual_stage(z1=None, target_pose=np.array([0.0, 0.665, 0.0, 0.30, 0.0, 0.40]),

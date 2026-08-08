@@ -20,14 +20,17 @@ torch.multiprocessing.set_sharing_strategy('file_system')
 import MinkowskiEngine as ME
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-ROOT_DIR = BASE_DIR
+ROOT_DIR = os.path.join(BASE_DIR, '..', '..', 'anydex_core')
 sys.path.append(os.path.join(ROOT_DIR, 'models'))
 sys.path.append(os.path.join(ROOT_DIR, 'dataset'))
 sys.path.append(os.path.join(ROOT_DIR, 'utils'))
 from multifinger_hand import MultifingerDataset, collate_fn, convert_data_to_gpu
 from solvers import PolyLR, StepLR
 from loss import MultifingerType1Loss
-from param import *
+try:
+    from param import *  # 上游遗留：本仓库无 param 模块，其符号也未被使用（配置均来自 argparse FLAGS）
+except ImportError:
+    pass
 parser = argparse.ArgumentParser()
 parser.add_argument('--dataset_root', default = './', help = 'dataset root')
 parser.add_argument('--model', default='minkowski_graspnet', help='Model file name [default: minkowski_graspnet]')

@@ -2,7 +2,8 @@
 """AnyDexGrasp 眼在手上 — 手安装/朝向计算共享模块。
 
 统一封装自研手在 Z1 法兰上的安装参数与「网络抓取位姿 → 法兰目标位姿」的计算，
-执行器 anydex_eih_grasp.py 与预览 run_inspire_preview.py 共用，避免逻辑漂移。
+执行器 anydex_eih_grasp.py (演示) / anydex_eih_grasp_calib.py (标定) 与预览
+run_inspire_preview.py 共用，避免逻辑漂移。
 
 坐标约定
 --------

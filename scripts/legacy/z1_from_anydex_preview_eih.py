@@ -30,9 +30,9 @@ from scipy.spatial.transform import Rotation
 
 # ── 路径常量 ──────────────────────────────────────────────
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-WS_ROOT = os.path.join(SCRIPT_DIR, "..")
+WS_ROOT = os.path.join(SCRIPT_DIR, "..", "..")
 
-Z1_CONTROL_SCRIPT = os.path.join(SCRIPT_DIR, "MoveZ1.py")
+Z1_CONTROL_SCRIPT = os.path.join(SCRIPT_DIR, "..", "MoveZ1.py")
 Z1_PYTHON = "/usr/bin/python3.8"
 
 DEFAULT_GRASP_INPUT = os.path.join(WS_ROOT, "logs", "preview", "latest_inspire_grasp.json")

@@ -22,7 +22,7 @@ import matplotlib.pyplot as plt
 import pickle
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-ROOT_DIR = os.path.join(BASE_DIR, '..', 'anydex_core')
+ROOT_DIR = os.path.join(BASE_DIR, '..', '..', 'anydex_core')
 sys.path.append(os.path.join(ROOT_DIR, 'models'))
 sys.path.append(os.path.join(ROOT_DIR, 'dataset'))
 sys.path.append(os.path.join(ROOT_DIR, 'utils'))

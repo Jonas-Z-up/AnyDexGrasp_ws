@@ -16,6 +16,9 @@ import os
 import sys
 import time
 
+# tools/ 子目录：父目录 scripts/ 加入 sys.path，以便导入 grasp_common / anydex_eih_grasp
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+
 # 让 anydex_eih_grasp 导入时跳过 hand_bridge（避免连手串口）
 _user_args = list(sys.argv[1:])
 sys.argv = ["validate_grasp_setup.py", "--no-hand"] + _user_args
@@ -30,7 +33,7 @@ sys.argv = ["validate_grasp_setup.py"] + _user_args
 import argparse
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-WS_ROOT = os.path.join(SCRIPT_DIR, "..")
+WS_ROOT = os.path.join(SCRIPT_DIR, "..", "..")
 DEFAULT_GRASP_JSON = os.path.join(WS_ROOT, "logs", "preview", "latest_inspire_grasp.json")
 DEFAULT_CALIB = os.path.join(WS_ROOT, "calibration", "cam2flange_current.json")
 

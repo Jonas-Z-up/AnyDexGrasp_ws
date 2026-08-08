@@ -33,14 +33,14 @@ from datetime import datetime
 import numpy as np
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-WS_ROOT = os.path.join(SCRIPT_DIR, "..")
-MOVEZ1_SCRIPT = os.path.join(SCRIPT_DIR, "MoveZ1.py")
+WS_ROOT = os.path.join(SCRIPT_DIR, "..", "..")
+MOVEZ1_SCRIPT = os.path.join(SCRIPT_DIR, "..", "MoveZ1.py")
 Z1_PYTHON = "/usr/bin/python3.8"
 LOG_PATH = os.path.join(WS_ROOT, "logs", "pose_verify_history.jsonl")
 
 DRY_RUN = "--dry-run" in sys.argv
 
-# 安全范围 (与 anydex_eih_grasp.py 一致)
+# 安全范围 (与 anydex_eih_grasp.py / anydex_eih_grasp_calib.py 一致)
 X_RANGE = (-0.05, 0.65)
 Y_RANGE = (-0.50, 0.50)
 Z_RANGE = (0.12, 0.70)
@@ -79,7 +79,7 @@ def _check_range(pose):
         raise ValueError(f"z={z:.3f} 超安全范围")
 
 
-# ── Z1 Server 客户端 (与 anydex_eih_grasp.py 同协议) ─────────────
+# ── Z1 Server 客户端 (与 anydex_eih_grasp.py / anydex_eih_grasp_calib.py 同协议) ─────────────
 
 class Z1Server:
     def __init__(self, speed=0.15):

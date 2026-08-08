@@ -20,7 +20,7 @@ torch.multiprocessing.set_sharing_strategy('file_system')
 import MinkowskiEngine as ME
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-ROOT_DIR = BASE_DIR
+ROOT_DIR = os.path.join(BASE_DIR, '..', '..', 'anydex_core')
 sys.path.append(os.path.join(ROOT_DIR, 'models'))
 sys.path.append(os.path.join(ROOT_DIR, 'dataset'))
 sys.path.append(os.path.join(ROOT_DIR, 'utils'))

@@ -28,7 +28,7 @@ AnyDexGrasp_ws/
 
 ## 快速开始
 
-### 1. 启动 Z1 机械臂控制器
+### 1. 启动 Z1 机械臂控制器（终端0）
 ```bash
 ping 192.168.123.110
 cd /home/jonas/Projects/unitree_z1/Unitree-Z1_SDK/z1_controller/build
@@ -37,7 +37,7 @@ cd /home/jonas/Projects/unitree_z1/Unitree-Z1_SDK/z1_controller/build
 预期: 终端显示 Z1 启动信息，机械臂上电保持当前位置
 
 
-### 2. 启动 RealSense 相机
+### 2. 启动 RealSense 相机（终端1）
 ```bash
 conda activate anydex
 cd ~/Projects/AnyDexGrasp_ws/scripts
@@ -46,30 +46,32 @@ python realsense.py
 预期：D435i 开始采集，深度+彩色帧持续写入共享内存 `realsense_depth` 和 `realsense_color`。
 
 
-### 3. 启动抓取编排器 → 移动到观测位姿（终端A）
+### 3. 启动抓取编排器 → 演示循环（终端A）
 ```bash
 conda activate anydex
 cd ~/Projects/AnyDexGrasp_ws/scripts
 python anydex_eih_grasp.py
-# 2. 真机微调 + 记录
-python anydex_eih_grasp.py --calib-jog
+# 演示循环: 每轮拍照后回车自动执行抓取, 松手后自动回观测位姿循环; 仅 Ctrl+C 回零下电退出
+# --no-hand: 无手桥, 手部步骤用固定等待(HAND_WAIT_S)模拟
+# 偏移微调版: python anydex_eih_grasp_calib.py --calib-jog  ← 见下方"抓取偏差标定"
 ```
-预期：Z1 移动到观测位姿，终端输出"请在另一个终端运行..."并等待。不要关这个终端——它保持着 Z1 连接，关掉机械臂会掉力。
+预期：Z1 移动到观测位姿，终端输出"确认抓取位姿无误..."并等待。不要关这个终端——它保持着 Z1 连接，关掉机械臂会掉力。所有可调参数（下降步长/等待时长/抓取高度/手安装参数等）在 `scripts/anydex_eih_grasp.py` 文件顶部「参数设置」区。
 
 
 ### 4. 拍照推理（终端B）
 ```bash
 conda activate anydex
 cd ~/Projects/AnyDexGrasp_ws/scripts
-python run_inspire_preview.py --visualize --collision \
+python run_inspire_preview.py --visualize --collision --preprocess \
     --min_depth 0.2 --max_depth 0.6 \
     --inspire_mesh_json_path /home/jonas/Projects/AnyDexGrasp/generate_mesh_and_pointcloud/inspire_urdf
 ```
 预期：弹出 Open3D 窗口显示抓取姿态（红色 Inspire 手 mesh + 蓝色两指夹爪 + 场景点云）。用鼠标检查姿态合理性。
 
-### 5. 确认并执行抓取
+
+### 5. 确认并执行抓取（每轮）
 回到**终端A**，检查 Open3D 中的抓取姿态无误后，按**回车**。
-预期：Z1 自动执行抓取流程：接近→**空中张手+预塑形**→可打断下降（Space/Esc 暂停接管、Ctrl+C 回零）→抓取点逐指闭合→[回车确认抓取]→上提→丢弃位姿→[回车确认丢弃]→松手→**3s 后自动回零**。加 `--no-hand` 可回退手动模式。
+预期：Z1 自动执行抓取流程：接近→**空中张手+预塑形**→可打断下降（Space/Esc 暂停接管人工微调、Ctrl+C 回零）→抓取点逐指闭合→上提→丢弃位姿→松手→**`DROP_SETTLE_S`（默认 2s）后自动回观测位姿，进入下一轮**。每轮都需重新在终端B拍照推理、回到终端A按回车确认新位姿。手部等待/下降步长等时长都是**文件顶部常量**（`HAND_WAIT_S`/`DROP_SETTLE_S`/`DESCEND_STEP_MM`），非命令行参数。仅 Ctrl+C 回零下电退出。
 ### 眼在手上 vs 眼在手外
 
 
@@ -78,7 +80,7 @@ python run_inspire_preview.py --visualize --collision \
 | 相机位置 | Z1 末端 | 桌面固定 |
 | 标定文件 | `calibration/cam2flange_current.json` | `calibration/cam2base_current.json` |
 | 变换链 | cam→flange→base (两步) | cam→base (一步) |
-| 脚本 | `anydex_eih_grasp.py` | `z1_from_anydex_preview.py` |
+| 脚本 | `anydex_eih_grasp.py` | `legacy/z1_from_anydex_preview.py`（已归档） |
 | Z1 需查询 | 是（命令观测位姿；getpose 有 ~40mm FK 虚报误差，已切换并确认） | 否 |
 
 
@@ -91,11 +93,13 @@ python gui_ub.py
 ## 抓取朝向/安装验证
 ```bash
 cd ~/Projects/AnyDexGrasp_ws/scripts
-python validate_grasp_setup.py --move    # 移臂到检查位姿，目视核对指尖/掌心方向（Ctrl+C 先回零再断开）
-python validate_grasp_setup.py --target  # 打印最新 grasp 的目标位姿（法兰/掌心/指尖位置）
+python tools/validate_grasp_setup.py --move    # 移臂到检查位姿，目视核对指尖/掌心方向（Ctrl+C 先回零再断开）
+python tools/validate_grasp_setup.py --target  # 打印最新 grasp 的目标位姿（法兰/掌心/指尖位置）
 ```
 
 ## 抓取偏差标定（人工微调 + 记录）
+
+> 演示版 `anydex_eih_grasp.py` 不做标定记录；标定仅走调参版 `anydex_eih_grasp_calib.py`。
 
 真机发现不同抓取位姿存在程度不同的**位置/朝向偏差**。用人工示教点标定定位系统性误差来源：
 到达目标抓取点后键盘微调机械臂对准物体，空格记录调整前后的位姿与偏移；
@@ -106,8 +110,8 @@ python validate_grasp_setup.py --target  # 打印最新 grasp 的目标位姿（
 cd ~/Projects/AnyDexGrasp_ws/scripts
 python jog_manual.py --dry-run
 
-# 2. 真机微调 + 记录（代替抓取编排器命令）
-python anydex_eih_grasp.py --calib-jog
+# 2. 真机微调 + 记录（调参版）
+python anydex_eih_grasp_calib.py --calib-jog
 
 # 3. 采集 ≥5 组（物体放不同位置/触发不同抓取类型）后分析
 python analyze_jog_history.py
@@ -116,15 +120,15 @@ python analyze_jog_history.py
 - 按键：`w/s/a/d/q/e` = 基座系前后/左右/上下微调（初始步长 5mm）；`r/f` = 俯仰 ±（绕法兰中心，默认 1°，`--jog-pitch-step-deg` 可调）；`+`/`-` = 切平移步长（2/5/10 mm）；`空格` = 记录并继续抓取；`回车` = 有微调会补记、没微调跳过；`Esc`/`Ctrl+C` = 中止（有调整会补记）。
 - 记录保存：`logs/jog_calib_history.jsonl`（可用 `--jog-history <路径>` 覆盖），每行一条 JSON 样本。
 - 分析输出：恒定偏置 → `offset_xyz` 建议；接近轴投影 → `hand_mount_z` 建议；朝向残余 → `offset_rpy_deg` 建议（pitch 为主，绕掌心中心，与 r/f 绕法兰中心不同，小角度近似）；offset 对物体深度线性拟合 → 斜率显著即指向手眼标定旋转误差（需重标定）。
-- ✅ 已知系统偏移（已闭环，2026-08-08）：①`getpose`(FK) 与命令位姿差 39.4±1.0mm 沿接近轴——真机实测 MoveJ 落点=命令位姿，getpose 是**虚报**，cam→base 用命令观测位姿已确认正确；②残余 `offset_xyz=[0.072,0,-0.085]` 实为**手眼外参错误**（相机比外参说的靠前 ~11cm 沿法兰+X）的总账补偿，根修=修正 `calibration/cam2flange_current.json` 或重标定（先查棋盘格实际边长是否 12mm）。定位工具：`python verify_z1_pose.py`（结果在 `logs/pose_verify_history.jsonl`）。
+- ✅ 已知系统偏移（已闭环，2026-08-08）：①`getpose`(FK) 与命令位姿差 39.4±1.0mm 沿接近轴——真机实测 MoveJ 落点=命令位姿，getpose 是**虚报**，cam→base 用命令观测位姿已确认正确；②残余 `offset_xyz=[0.072,0,-0.085]` 实为**手眼外参错误**（相机比外参说的靠前 ~11cm 沿法兰+X）的总账补偿，根修=修正 `calibration/cam2flange_current.json` 或重标定（先查棋盘格实际边长是否 12mm）。定位工具：`python tools/verify_z1_pose.py`（结果在 `logs/pose_verify_history.jsonl`）。
 
 ## 训练
 ```bash
-# 阶段1：训练 CGR 表示模型
-python scripts/train.py --log_dir logs/model/rep_log --batch_size 4 --learning_rate 0.001 --camera realsense
+# 阶段1：训练 CGR 表示模型（上游代码，已归档至 scripts/legacy/）
+python scripts/legacy/train.py --log_dir logs/model/rep_log --batch_size 4 --learning_rate 0.001 --camera realsense
 
 # 阶段2：训练抓取决策模型
-python scripts/train_multifinger.py \
+python scripts/legacy/train_multifinger.py \
     --dataset_root=logs/data/decision_model/inspire/obj140 \
     --log_dir=logs/model/inspire_model/obj140/1_class_1_model/ \
     --gripper_type=Inspire --train_multifinger_type=8

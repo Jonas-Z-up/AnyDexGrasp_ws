@@ -4,7 +4,7 @@ import os
 import subprocess
 
 
-CONTROL_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "MoveZ1.py")
+CONTROL_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "MoveZ1.py")
 ROBOT_PYTHON = "/usr/bin/python3.8"
 
 

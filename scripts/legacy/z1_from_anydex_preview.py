@@ -10,7 +10,7 @@ from scipy.spatial.transform import Rotation
 
 Z1_WRAPPER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "yprxyz_to_z1.py")
 Z1_PYTHON = "/usr/bin/python3.8"
-DEFAULT_CALIBRATION_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "calibration", "cam2base_current.json")
+DEFAULT_CALIBRATION_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "calibration", "cam2base_current.json")
 
 R_CAM2BASE = np.array([
     [-0.04563462, 0.99836490, 0.03442389],

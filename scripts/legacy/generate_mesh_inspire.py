@@ -11,7 +11,7 @@ import math
 from tqdm import tqdm
 import sys
 import os
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'anydex_core'))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'anydex_core'))
 from angles2stl import InspireAngles2STLs
 try:
     from ur_toolbox.robot.Inspire.InspireHandR_grasp import grasp_types

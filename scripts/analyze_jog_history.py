@@ -4,7 +4,7 @@
 用法:
   python analyze_jog_history.py [history.jsonl]
 
-数据来源:anydex_eih_grasp.py --calib-jog 空格记录的人工微调偏移。
+数据来源:anydex_eih_grasp_calib.py --calib-jog 空格记录的人工微调偏移。
 每条 offset = 人工对准后的实际位姿 − 到达目标时的实际位姿(基座系)。
 偏移越大 ⇒ 网络/标定/安装引入的系统性误差越大。
 
