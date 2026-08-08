@@ -340,10 +340,18 @@ def main():
                 R_f2b = Rotation.from_euler("xyz", gc.OBSERVE_RPYXYZ[:3]).as_matrix()
                 offset_cam = R_c2f.T @ R_f2b.T @ np.asarray(gc.load_offset_xyz(), dtype=float)
                 p_palm_cam = p_palm_cam + offset_cam
+                # 基座系旋转调试偏移（config offset_rpy_deg，度，绕掌心中心）共轭进相机系：
+                # 执行器命令的法兰旋转 = R_off @ R_f2b @ R_c2f @ R_palm @ R_mount，相机系表达 =
+                # (R_f2b@R_c2f).T @ R_off @ (R_f2b@R_c2f) @ R_palm @ R_mount。零偏移时取 I，
+                # 保证旧渲染逐字节不变（避免 R_f2b.T@R_f2b 的浮点非正交噪声）。
+                offset_rpy_deg = np.asarray(gc.load_offset_rpy_deg(), dtype=float)
+                R_off = Rotation.from_euler("xyz", np.deg2rad(offset_rpy_deg)).as_matrix()
+                R_off_cam = (np.eye(3) if np.allclose(offset_rpy_deg, 0)
+                             else R_c2f.T @ R_f2b.T @ R_off @ R_f2b @ R_c2f)
                 R_mount = gc.compute_R_mount(hand_cfg["mount_yaw_deg"])
                 # 相机系里法兰帧 = palm@R_mount：X 沿指尖，Y/Z 差 90°（安装滚转）。
                 # 不能再乘 R_c2f（相机↔法兰标定）：那会多转约 90°，橙帧方向与红 mesh 对不上。
-                R_flange_cam = R_palm @ R_mount
+                R_flange_cam = R_off_cam @ R_palm @ R_mount
                 approach_cam = R_flange_cam[:, 0]      # 指尖方向 = 法兰 +X（相机系）
                 p_flange_cam = p_palm_cam - hand_cfg["hand_mount_z"] * approach_cam
                 p_tip_cam = p_palm_cam + (hand_cfg["hand_fingertip_z"] - hand_cfg["hand_mount_z"]) * approach_cam
@@ -368,8 +376,13 @@ def main():
                 tip_marker.paint_uniform_color([0.1, 0.4, 1.0])
 
                 mode = "将回退固定朝向" if will_fallback else "采用网络朝向"
+                off_rpy_txt = ""
+                if not np.allclose(offset_rpy_deg, 0):
+                    off_rpy_txt = (f"  +offset_rpy=["
+                                   f"{', '.join(f'{v:+.1f}°' for v in offset_rpy_deg)}]")
                 print(f"[法兰目标] p_cam={p_flange_cam.round(3)} 与固定朝向夹角 {dev:.1f}° "
-                      f"(阈值 {hand_cfg['orient_deviation_thresh_deg']}°) → {mode}",
+                      f"(阈值 {hand_cfg['orient_deviation_thresh_deg']}°) → {mode}"
+                      f"{off_rpy_txt}",
                       flush=True)
             except Exception as e:
                 print(f"[法兰目标] 可视化计算失败: {e}", flush=True)
