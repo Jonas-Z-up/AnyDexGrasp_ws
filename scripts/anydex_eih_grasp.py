@@ -291,8 +291,10 @@ def main():
         p_flange = target["p_flange"]
 
         if target["used_network"]:
+            off_note = "  (rpy 已含 offset_rpy，deviation 为 offset 前值)" \
+                if not np.allclose(grasp_common.load_offset_rpy_deg(), 0) else ""
             print(f"[朝向] 使用网络朝向 rpy=[{rpy[0]:.3f},{rpy[1]:.3f},{rpy[2]:.3f}]  "
-                  f"(与固定朝向夹角 {target['deviation_deg']:.1f}°)")
+                  f"(与固定朝向夹角 {target['deviation_deg']:.1f}°){off_note}")
         else:
             print(f"[朝向] 网络朝向夹角 {target['deviation_deg']:.1f}° 超阈值，回退固定朝向 "
                   f"[{FIXED_RPY[0]:.3f},{FIXED_RPY[1]:.3f},{FIXED_RPY[2]:.3f}]")
@@ -306,10 +308,15 @@ def main():
         drop = np.array(DROP_RPYXYZ, dtype=float)
         grasp_type = int(grasp["grasp_type"])
 
+        off_rpy = grasp_common.load_offset_rpy_deg()
+        off_rpy_txt = ""
+        if not np.allclose(off_rpy, 0):
+            off_rpy_txt = (f"  +offset_rpy=[{', '.join(f'{v:+.1f}°' for v in off_rpy)}]"
+                           f"(基座系绕掌心)")
         print(f"[目标] rpy=[{rpy[0]:.3f},{rpy[1]:.3f},{rpy[2]:.3f}] "
               f"xyz=[{p_flange[0]:.3f},{p_flange[1]:.3f},{p_flange[2]:.3f}] "
               f"(掌心=[{target['p_palm_base'][0]:.3f},{target['p_palm_base'][1]:.3f},"
-              f"{target['p_palm_base'][2]:.3f}])")
+              f"{target['p_palm_base'][2]:.3f}]){off_rpy_txt}")
 
         # ── 自动抓取流程 ─────────────────────────────────
         # Phase 2a: 移动到抓取点上方。Z1 真实 IK 工作空间比粗过滤窄,网络朝向不可达
@@ -388,7 +395,9 @@ def main():
                 "used_network": target["used_network"],
                 "deviation_deg": target["deviation_deg"],
             }
-            calib_cfg = {**hand_cfg, "offset_xyz": grasp_common.load_offset_xyz()}
+            calib_cfg = {**hand_cfg,
+                         "offset_xyz": grasp_common.load_offset_xyz(),
+                         "offset_rpy_deg": grasp_common.load_offset_rpy_deg()}
             res = jog_manual.jog_manual_stage(
                 z1, np.concatenate([rpy, p_flange]), grasp_meta,
                 calib_cfg, JOG_HISTORY, step_mm=JOG_STEP_MM,

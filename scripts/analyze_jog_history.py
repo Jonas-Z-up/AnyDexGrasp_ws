@@ -8,11 +8,13 @@
 每条 offset = 人工对准后的实际位姿 − 到达目标时的实际位姿(基座系)。
 偏移越大 ⇒ 网络/标定/安装引入的系统性误差越大。
 
-输出三类结论:
+输出四类结论:
   1. 恒定偏置    → mean(offset.xyz)         ⇒ 建议 offset_xyz 调整
   2. 接近轴误差  → mean(offset·approach)     ⇒ 建议 hand_mount_z 调整
   3. 随深度变化  → offset 各分量对 depth_cam 线性拟合斜率显著 ⇒ R_c2f 旋转误差,
                    offset_xyz / hand_mount_z 都救不了,需重标定或闭环修正。
+  4. 朝向残余    → mean(offset.rpy)          ⇒ 建议 offset_rpy_deg 调整(pitch 为主;
+                   注: jog 绕法兰中心 vs config offset_rpy 绕掌心中心,小角度近似)。
 """
 
 import json
@@ -65,6 +67,7 @@ def analyze(path):
     print("-" * len(header))
 
     offsets = []          # (N,3) mm
+    rpy_offsets = []      # (N,3) rad, 操作员绕法兰中心的 rpy 调整量（r/f 只动 pitch）
     projs = []            # (N,) mm, offset·approach
     depths = []           # (N,) m
     fallback_n = 0
@@ -79,6 +82,7 @@ def analyze(path):
         fallback_n += fb
 
         offsets.append(offset)
+        rpy_offsets.append(_rpy(r["after"]) - _rpy(r["before"]))
         projs.append(p)
         depths.append(depth)
 
@@ -87,6 +91,7 @@ def analyze(path):
               f"{offset[0]:>8.1f}{offset[1]:>8.1f}{offset[2]:>8.1f}{p:>11.1f}")
 
     offsets = np.asarray(offsets)
+    rpy_offsets = np.asarray(rpy_offsets)
     projs = np.asarray(projs)
     depths = np.asarray(depths)
 
@@ -140,6 +145,27 @@ def analyze(path):
     print(f'    "offset_xyz": [{new_off_xyz[0]:.3f}, {new_off_xyz[1]:.3f}, {new_off_xyz[2]:.3f}],')
     if mz_cfg is not None:
         print(f'    "hand_mount_z": {mz_cfg - p_mean / 1000.0:.4f},')
+
+    # 4) 朝向残余 (offset_rpy_deg, 度)：r/f 只动 pitch，均值显著才建议。
+    #    注: jog 的 pitch 绕法兰中心, config offset_rpy 绕掌心中心——小角度下角度
+    #    修正可迁移, 法兰位置摆动不同(±hand_mount_z·sinθ), 改后重新采集几组确认。
+    mean_rpy = rpy_offsets.mean(axis=0) * 180.0 / np.pi
+    std_rpy = rpy_offsets.std(axis=0) * 180.0 / np.pi
+    print(f"\n[4] 朝向残余 offset.rpy (°):"
+          f"  均值 = [{mean_rpy[0]:+6.2f}, {mean_rpy[1]:+6.2f}, {mean_rpy[2]:+6.2f}]"
+          f"  标准差 = [{std_rpy[0]:.2f}, {std_rpy[1]:.2f}, {std_rpy[2]:.2f}]")
+    off_rpy_deg = first_cfg.get("offset_rpy_deg", [0.0, 0.0, 0.0])
+    if abs(mean_rpy[1]) > 0.5:
+        new_pitch = float(off_rpy_deg[1]) + mean_rpy[1]
+        print(f'    "offset_rpy_deg": [{off_rpy_deg[0]:.1f}, {new_pitch:.1f}, '
+              f'{off_rpy_deg[2]:.1f}],  (pitch +{mean_rpy[1]:+.2f}°)')
+    elif abs(mean_rpy[1]) > 0.05:
+        print(f"    (pitch 均值 {mean_rpy[1]:+.2f}° <0.5°,暂不写 offset_rpy_deg)")
+    for j, name in [(0, "roll"), (2, "yaw")]:
+        if abs(mean_rpy[j]) > 0.5:
+            print(f"    ⚠ {name} 均值 {mean_rpy[j]:+.2f}° 异常大——r/f 不调 {name},"
+                  f"此残余可能来自 R_c2f 旋转误差或安装滚转,建议重标定而非 offset_rpy_deg")
+
     if fallback_n:
         print(f"\n(注: {fallback_n}/{len(recs)} 条为网络朝向回退样本,已标记●;"
               f"若回退样本过多,建议用网络朝向样本单独分析)")

@@ -61,6 +61,8 @@ def print_params():
     print("  · 指尖方向(基座系) = 法兰 +X 首列")
     print("  · 法兰位置 = 掌心 − hand_mount_z × 指尖方向")
     print("  · 固定朝向(兜底) FIXED_RPY =", gc.FIXED_RPY)
+    print("  · offset_xyz =", gc.load_offset_xyz(), "  (基座系平移, m)")
+    print("  · offset_rpy_deg =", gc.load_offset_rpy_deg(), "  (基座系绕掌心旋转, °)")
     print()
     print("静态检查清单（移到检查位姿后目视核对）:")
     print("  [1] 指尖朝前下方（朝向桌面）")

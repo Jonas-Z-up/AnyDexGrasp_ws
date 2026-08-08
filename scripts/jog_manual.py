@@ -58,6 +58,8 @@ HELP = """\
     空格 记录本次调整并继续抓取    回车 有微调会补记/没微调则跳过
     [+]/[-] 步长切换 (2/5/10 mm)    [?]/[h] 本帮助
     Esc / Ctrl+C 中止 (有调整会补记一条)
+  注: config offset_rpy_deg 绕**掌心**中心旋转(朝向调试), 与这里 r/f 绕**法兰**中心
+     不同: 小角度下角度效果相同, 区别在法兰位置摆动(offset 摆, jog 不摆)。
 """
 
 
@@ -113,6 +115,7 @@ def build_record(target_pose, before, after, grasp_meta, cfg):
             "hand_fingertip_z": cfg.get("hand_fingertip_z"),
             "mount_yaw_deg": cfg.get("mount_yaw_deg"),
             "offset_xyz": [float(v) for v in cfg.get("offset_xyz", [0.0, 0.0, 0.0])],
+            "offset_rpy_deg": [float(v) for v in cfg.get("offset_rpy_deg", [0.0, 0.0, 0.0])],
             "orient_deviation_thresh_deg": cfg.get("orient_deviation_thresh_deg"),
         },
     }
@@ -204,7 +207,7 @@ def jog_manual_stage(z1, target_pose, grasp_meta, cfg,
     z1 : Z1Server 或 None(dry_run 时 None)
     target_pose : (6,) 命令抓取位姿 [r, p, y, x, y, z](基座系)
     grasp_meta : dict,含 grasp_json/grasp_type/score/p_cam/used_network 等
-    cfg : dict,含 hand_mount_z/mount_yaw_deg/offset_xyz 等(写入记录供分析)
+    cfg : dict,含 hand_mount_z/mount_yaw_deg/offset_xyz/offset_rpy_deg 等(写入记录供分析)
     pitch_step_deg : 俯仰步长 (°),r/f 每按一次改 base[1] 这么多度
     record : False 时不写标定历史(供"下降被打断→人工接管"用,避免污染标定数据)
 
@@ -381,6 +384,7 @@ def main():
                                  "used_network": True, "deviation_deg": 10.0},
                      cfg={"hand_mount_z": 0.09, "hand_fingertip_z": 0.24,
                           "mount_yaw_deg": -90.0, "offset_xyz": [0.1, 0.0, 0.0],
+                          "offset_rpy_deg": [0.0, 0.0, 0.0],
                           "orient_deviation_thresh_deg": 90.0},
                      history_path=os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                                "..", "logs", "jog_calib_history.jsonl"),
