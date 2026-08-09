@@ -442,22 +442,13 @@ def main():
         time.sleep(DROP_SETTLE_S)
 
     except KeyboardInterrupt:
-        print("\n\n⚠️  用户取消，回零后退出...")
+        print("\n\n⚠️  用户取消，先回零再松手...")
         # 不设 SIG_IGN：清理期间再按一次 Ctrl+C 会立即抛 KeyboardInterrupt 强退
-        try:
-            if hand is not None:
-                hand.release()
-        except Exception:
-            pass
-        # 回零统一放到 finally 处理：任何退出路径都先回零再下电
+        # 不在 except 里松手: 低空(下降中/抓取点)直接张开手指易扫到桌面损坏手,
+        # 统一放到 finally 在机械臂回零之后执行。
     finally:
         print("\n[关闭] 安全退出...")
-        if hand is not None:
-            try:
-                hand.release()
-                hand.close_connection()
-            except Exception:
-                pass
+        # 顺序: 先机械臂回零(手随臂离开桌面到安全高度), 再松手复位灵巧手。
         # 方案 A：任何退出路径（正常完成 / Ctrl+C / 异常）下电前先回零。
         # 编排器已不再传 --no-return-home，MoveZ1 shutdown 默认也会 backToStart 兜底；
         # 这里先 home 让子进程下电前的 backToStart 成为空操作，
@@ -466,6 +457,13 @@ def main():
             z1.home(timeout=30)
         except Exception:
             print("[Z1] 回零失败或超时，跳过回零", flush=True)
+        # 机械臂回零后, 手已在安全高度, 再复位灵巧手(全开)并关串口
+        if hand is not None:
+            try:
+                hand.release()
+                hand.close_connection()
+            except Exception:
+                pass
         # 给子进程留足时间完成 shutdown 内的 backToStart + PASSIVE，超时/异常再强杀
         try:
             z1.quit(timeout=30)

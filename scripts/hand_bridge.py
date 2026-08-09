@@ -91,7 +91,7 @@ PRESHAPE_LIBRARY = {
     },
     7: {  # Sphere 3-Finger — 球形三指抓
         "name": "Sphere 3-Finger",
-        "broadcast": [800, 2000, 2000, 2000, 2000, 900],   # 拇指内旋深 800
+        "broadcast": [800, 2000, 2000, 2000, 2000, 300],   # 拇指内旋深 800
         "wait": 1.5,
         "close": [
             (1, 3500, 1000, 550),

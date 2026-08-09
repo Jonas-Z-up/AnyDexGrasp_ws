@@ -61,7 +61,7 @@ conda activate anydex && cd scripts && python run_inspire_preview.py --visualize
 
 ## 关键约定
 - `MoveZ1.py` 作为子进程运行，走 `--server` 模式，通过 stdin/stdout 文本协议通信；MoveL 失败自动回退 MoveJ
-- `start_new_session=True` 防止 Ctrl+C 传播到 Z1 子进程；下电前任何退出路径（正常完成/Ctrl+C/异常）都先 `home` 回零再断开——编排器不传 `--no-return-home`，MoveZ1 shutdown 默认 `backToStart` 兜底，断电停在零位不半空下垂。demo 版正常完成：松手后等 `DROP_SETTLE_S`（默认 2s，文件顶部常量）回观测位姿循环，仅 Ctrl+C 回零下电；标定版仍等 `DROP_SETTLE_S` 后自动回零下电（`--drop-settle-s` 可调），无二次回车
+- `start_new_session=True` 防止 Ctrl+C 传播到 Z1 子进程；下电前任何退出路径（正常完成/Ctrl+C/异常）都先 `home` 回零再断开——**顺序固定为：先机械臂回零、再松手复位灵巧手**（低空直接张开手指会扫到桌面损坏手，故 Ctrl+C 不再提前松手）——编排器不传 `--no-return-home`，MoveZ1 shutdown 默认 `backToStart` 兜底，断电停在零位不半空下垂。demo 版正常完成：松手后等 `DROP_SETTLE_S`（默认 2s，文件顶部常量）回观测位姿循环，仅 Ctrl+C 回零下电；标定版仍等 `DROP_SETTLE_S` 后自动回零下电（`--drop-settle-s` 可调），无二次回车
 - 移动策略: Phase1 MoveJ→准备点→MoveJ→观测位姿; Phase2 MoveJ→接近（IK 不可达时回退固定朝向、并降接近高度 12→8→6cm 重试；全失败打印"超出 Z1 可达范围"并优雅回零中止）→**空中张手+预塑形**→**步进下降**（`jog_manual.descend_interruptible`，demo 用 `DESCEND_STEP_MM` 常量默认 10mm，标定版用 `--jog-descend-step-mm`；Space/Esc 暂停接管、Ctrl+C 中断回零）→抓取点逐指闭合→上提→丢弃位姿→松手→`DROP_SETTLE_S` 后回观测位姿循环下一轮。demo 中间闸门用固定等待 `HAND_WAIT_S`；标定版闭合后/到丢弃位姿后仍各需回车确认
 - 抓取朝向: 手与相机同轴沿法兰 **+X** 安装（指尖前下方，真机已验证）。规范手帧：palm +X=指尖、掌心朝 -Y（URDF 指节朝 -Y 弯曲）。物理安装 = Rx(+90°)（掌心朝法兰 -Z，默认状态掌心向下）；`mount_yaw_deg=-90°` 是**补偿符号**，使命令法兰放出的真实手 = 网络渲染（若设 +90° 会掌心翻转朝上，偏差~171° 全回退固定）。指尖方向=法兰+X首列，法兰位置=掌心−`hand_mount_z`×指尖方向（当前 0.09，减小=整手沿接近轴推深）。参数在 `config/grasp_config.json`（hand_mount_z/hand_fingertip_z/mount_yaw_deg/orient_deviation_thresh_deg/offset_xyz/offset_rpy_deg）
 - 基座系抓取偏移 `offset_xyz`（config，当前 [0.072, 0.0, -0.085]）：整只手纯水平平移（不改变接近轴方向与 z），`grasp_common.load_offset_xyz`/`compute_grasp_target` 统一处理，执行器/预览/验证三处一致。改 x/y 分量即可水平微调
