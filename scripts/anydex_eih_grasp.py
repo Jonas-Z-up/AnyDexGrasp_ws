@@ -48,6 +48,7 @@ DEFAULT_CALIB = os.path.join(WS_ROOT, "calibration", "cam2flange_current.json")
 # ═══ 参数设置（demo 调参区）═══
 # 所有可调参数集中在此；非命令行 flags。
 DESCEND_STEP_MM = 10.0          # 可打断下降每步高度 (mm)
+GRASP_WAIT_S = 1.0              # 到达抓取点后、闭合前等待秒数 (让手稳定对准)
 HAND_WAIT_S = 3.0               # 手部步骤固定等待秒数
 DROP_SETTLE_S = 1.0             # 松手后等待秒数 (看物体掉落)
 TAKEOVER_STEP_MM = 5.0          # 接管微调初始平移步长 (mm)
@@ -62,8 +63,10 @@ APPROACH_Z = 0.12               # 抓取点上方安全距离 (m)
 LIFT_Z = 0.08                   # 抓取后上提高度 (m)
 FIXED_RPY = grasp_common.FIXED_RPY   # 固定抓取朝向（兜底）
 SPEED = 0.15
+# 中转节点 [roll, pitch, yaw, x, y, z] — 避障
+TRANSIT_RPYXYZ = (0.0, -0.094, 0.0, 0.5, 0.0, 0.4)
 # 丢弃位姿 [roll, pitch, yaw, x, y, z] — 抓取后移到这里松手
-DROP_RPYXYZ = (0.0, -0.094, 0.0, 0.55, 0.0, 0.4)
+DROP_RPYXYZ = (0.0, -0.094, 0.5, 0.5, 0.2, 0.4)
 # 安全范围
 X_RANGE = (-0.05, 0.65)
 Y_RANGE = (-0.50, 0.50)
@@ -75,8 +78,9 @@ HAND_MOUNT_Z = 0.09             # 法兰→掌心沿接近轴 (m)
 HAND_FINGERTIP_Z = 0.24         # 法兰→指尖 (m), 参考值, demo 未直接使用
 MOUNT_YAW_DEG = -90.0           # 拇指/掌心绕接近轴方位角 α
 ORIENT_DEV_THRESH_DEG = 90.0    # 网络朝向 vs 固定朝向偏差阈值, 超则回退
-OFFSET_XYZ = [0.072, 0.0, -0.085]       # 基座系抓取位置偏移 (m)
-OFFSET_RPY_DEG = [0.0, 0.0, 0.0]        # 基座系绕掌心旋转偏移 (度)
+OFFSET_XYZ = [0.085, 0.01, -0.065]       # 基座系抓取位置偏移 (m) —— 与 config 一致
+OFFSET_RPY_DEG = [0.0, 15.0, 0.0]       # 基座系绕掌心旋转偏移 (度) —— 与 config 一致
+Z_COMP_KNOTS = [[0.20625, 0.005], [0.258398, -0.02]]  # 基座系 z 高度补偿锚点 [命令z, 补偿量] (m) —— 与 config 一致
 
 
 # ── Z1 Server 客户端 ─────────────────────────────────────
@@ -320,6 +324,7 @@ def grasp_once(z1, hand, round_no):
         grasp, R_c2f, t_c2f, flange,
         HAND_MOUNT_Z, MOUNT_YAW_DEG, ORIENT_DEV_THRESH_DEG,
         offset_xyz=OFFSET_XYZ, offset_rpy_deg=OFFSET_RPY_DEG,
+        z_comp_knots=Z_COMP_KNOTS,
         fixed_rpy=FIXED_RPY,
     )
     rpy = target["rpy"]
@@ -341,6 +346,7 @@ def grasp_once(z1, hand, round_no):
     approach = _pose(rpy, p_flange + np.array([0, 0, APPROACH_Z]))
     lift_target = _pose(rpy, p_flange + np.array([0, 0, LIFT_Z]))
     drop = np.array(DROP_RPYXYZ, dtype=float)
+    transit = np.array(TRANSIT_RPYXYZ, dtype=float)
     grasp_type = int(grasp["grasp_type"])
 
     off_rpy = OFFSET_RPY_DEG
@@ -348,10 +354,11 @@ def grasp_once(z1, hand, round_no):
     if not np.allclose(off_rpy, 0):
         off_rpy_txt = (f"  +offset_rpy=[{', '.join(f'{v:+.1f}°' for v in off_rpy)}]"
                        f"(基座系绕掌心)")
+    z_comp_txt = f"  +z_comp={target['z_comp']:.3f}" if target["z_comp"] != 0.0 else ""
     print(f"[目标] rpy=[{rpy[0]:.3f},{rpy[1]:.3f},{rpy[2]:.3f}] "
           f"xyz=[{p_flange[0]:.3f},{p_flange[1]:.3f},{p_flange[2]:.3f}] "
           f"(掌心=[{target['p_palm_base'][0]:.3f},{target['p_palm_base'][1]:.3f},"
-          f"{target['p_palm_base'][2]:.3f}]){off_rpy_txt}")
+          f"{target['p_palm_base'][2]:.3f}]){off_rpy_txt}{z_comp_txt}")
 
     # ── 自动抓取流程 ─────────────────────────────────
     # Phase 2a: 移动到抓取点上方。Z1 真实 IK 工作空间比粗过滤窄,网络朝向不可达
@@ -368,6 +375,7 @@ def grasp_once(z1, hand, round_no):
         grasp, R_c2f, t_c2f, flange,
         HAND_MOUNT_Z, MOUNT_YAW_DEG, ORIENT_DEV_THRESH_DEG,
         offset_xyz=OFFSET_XYZ, offset_rpy_deg=OFFSET_RPY_DEG,
+        z_comp_knots=Z_COMP_KNOTS,
         fixed_rpy=FIXED_RPY, force_fixed=True,
     )
     cands.append((t_fixed, "固定朝向"))
@@ -412,6 +420,8 @@ def grasp_once(z1, hand, round_no):
             raise KeyboardInterrupt
 
     if hand is not None:
+        print(f"[确认] 已到达抓取点，{GRASP_WAIT_S:.0f}s 后闭合抓取...")
+        time.sleep(GRASP_WAIT_S)
         hand.close(grasp_type)             # 闭合抓取
     else:
         print(f"[手] --no-hand：等待 {HAND_WAIT_S:.0f}s 模拟人工抓取...")
@@ -423,7 +433,10 @@ def grasp_once(z1, hand, round_no):
     print(f"[执行] Phase 2c: MoveJ → 上提 {LIFT_Z*100:.0f}cm")
     z1.movej(lift_target)
 
-    print(f"[执行] Phase 2d: MoveJ → 丢弃位姿")
+    print(f"[执行] Phase 2d: MoveJ → 中转节点 (丢弃位姿上方)")
+    z1.movej(transit)
+
+    print(f"[执行] Phase 2e: MoveJ → 丢弃位姿")
     z1.movej(drop)
 
     print(f"[确认] 已到达丢弃位姿，{HAND_WAIT_S:.0f}s 后自动松手 (Ctrl+C 可取消)...")

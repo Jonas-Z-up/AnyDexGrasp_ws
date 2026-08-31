@@ -20,7 +20,7 @@ def parse_args():
     )
     parser.add_argument("--checkpoint_path", default="../logs/model/checkpoint.tar.18")
     parser.add_argument("--inspire_model_path", default="../logs/model/inspire_model/obj140")
-    parser.add_argument("--inspire_mesh_json_path", default="/home/jonas/Projects/AnyDexGrasp/generate_mesh_and_pointcloud/inspire_urdf")
+    parser.add_argument("--inspire_mesh_json_path", default="../assets/inspire_urdf")
     parser.add_argument("--use_graspnet_v2", action="store_true", default=True)
     parser.add_argument("--half_views", action="store_true")
     parser.add_argument("--score_thresh", type=float, default=0.85)
@@ -333,6 +333,7 @@ def main():
                     calib = json.load(f)
                 hand_cfg = gc.load_hand_config()
                 R_c2f = np.array(calib["R_cam2flange"], dtype=float)
+                t_c2f = np.array(calib["t_cam2flange"], dtype=float)
                 R_palm = np.asarray(result["rotation_matrix"], dtype=float).reshape(3, 3)
                 p_palm_cam = np.asarray(result["translation"], dtype=float)
                 # 基座系手动偏移（config offset_xyz，纯水平 +X 微调）转到相机系，与执行器
@@ -355,6 +356,19 @@ def main():
                 approach_cam = R_flange_cam[:, 0]      # 指尖方向 = 法兰 +X（相机系）
                 p_flange_cam = p_palm_cam - hand_cfg["hand_mount_z"] * approach_cam
                 p_tip_cam = p_palm_cam + (hand_cfg["hand_fingertip_z"] - hand_cfg["hand_mount_z"]) * approach_cam
+
+                # 基座系 z 高度补偿（config z_comp_knots，与执行器同：键=补偿前命令法兰 z）
+                # 共轭进相机系：基座平移 Δb 在相机系表现为 R_c2f.T @ R_f2b.T @ Δb（同 offset_cam）。
+                # 先以补偿前 z_base 取键（p_flange_cam 经完整相机→法兰→基座链换算，与执行器
+                # compute_grasp_target 的 p_flange[2] 数值一致），再整手（palm/flange/tip）刚体平移 d_cam。
+                z_base = (R_f2b @ (R_c2f @ p_flange_cam + t_c2f)
+                          + np.asarray(gc.OBSERVE_RPYXYZ[3:6], dtype=float))[2]
+                dz = gc.compute_z_comp(z_base, gc.load_z_comp_knots())
+                if dz != 0.0:
+                    d_cam = R_c2f.T @ R_f2b.T @ np.array([0.0, 0.0, dz])
+                    p_palm_cam = p_palm_cam + d_cam
+                    p_flange_cam = p_flange_cam + d_cam
+                    p_tip_cam = p_tip_cam + d_cam
 
                 # 偏差与执行器一致：基座系计算（与 compute_grasp_target 同式）。
                 # 旧式 angle(R_c2f R_palm R_mount @ R_fixed^T R_f2b) 与执行器数值相同（共轭相似），

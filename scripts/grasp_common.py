@@ -32,6 +32,7 @@ DEFAULT_HAND_FINGERTIP_Z = 0.24    # 法兰→指尖 (m)，用于间隙/碰撞�
 DEFAULT_MOUNT_YAW_DEG = -90.0      # 拇指/掌心绕接近轴的方位角 α（右手手型）
 DEFAULT_DEV_THRESH_DEG = 90.0      # 网络朝向与固定朝向夹角阈值，超则回退
 DEFAULT_OFFSET_RPY_DEG = [0.0, 0.0, 0.0]  # 基座系绕掌心旋转调试偏移（度）
+DEFAULT_Z_COMP_KNOTS = []  # 基座系 z 高度补偿锚点 [[z, comp_z]…]（米）；空 = 不补偿
 
 # ── 与执行器共用的抓取常量 ────────────────────────────────────────
 FIXED_RPY = (0.0, 0.665, 0.0)     # 固定抓取朝向（兜底）
@@ -97,6 +98,37 @@ def load_offset_rpy_deg(path=None):
     return [float(v) for v in offset]
 
 
+def load_z_comp_knots(path=None):
+    """从 config/grasp_config.json 读取 z 高度补偿锚点 [[z, comp_z], ...]（米）。
+
+    每个锚点 = [命令法兰 z（补偿前）, z 方向补偿量]；分段线性、范围外 clamp。
+    空/缺失 → []（不补偿）。执行器/预览/验证共用，保证三处一致。
+    """
+    if path is None:
+        path = default_config_path()
+    if os.path.exists(path):
+        with open(path) as f:
+            cfg = json.load(f)
+        knots = cfg.get("z_comp_knots", DEFAULT_Z_COMP_KNOTS)
+    else:
+        knots = DEFAULT_Z_COMP_KNOTS
+    return [[float(a), float(b)] for a, b in knots]
+
+
+def compute_z_comp(z, knots):
+    """分段线性 z 补偿：键 = 命令法兰 z（补偿前），锚点间线性插值，范围外取端点值（clamp）。
+
+    纯函数，便于离线单测。knots: [[z_i, comp_i], ...]，要求 z 列按升序（np.interp 前提，
+    不静默排序——异常配置应尽早报错）。空 / None / 少于 2 个锚点 → 0.0。
+    补偿是单次修正，不是不动点迭代：键始终用补偿前的 z。
+    """
+    if not knots or len(knots) < 2:
+        return 0.0
+    zs = np.asarray([float(k[0]) for k in knots], dtype=float)
+    cs = np.asarray([float(k[1]) for k in knots], dtype=float)
+    return float(np.interp(float(z), zs, cs))
+
+
 def compute_R_mount(mount_yaw_deg):
     """palm 帧 → 法兰帧 的固定安装旋转 R_mount = Rx(α)。
 
@@ -111,21 +143,26 @@ def compute_R_mount(mount_yaw_deg):
 def compute_grasp_target(grasp, R_c2f, t_c2f, flange_pose,
                          hand_mount_z=None, mount_yaw_deg=None,
                          dev_thresh_deg=None, offset_xyz=None,
-                         offset_rpy_deg=None,
+                         offset_rpy_deg=None, z_comp_knots=None,
                          fixed_rpy=FIXED_RPY,
                          force_fixed=False):
     """网络抓取位姿（相机系）→ 法兰目标位姿（基座系）。
 
     纯函数，便于离线单测。返回：
         rpy         (3,) 法兰目标朝向 [roll, pitch, yaw]
-        p_flange    (3,) 法兰目标位置（已补偿安装偏移 + offset_xyz，基座系）
+        p_flange    (3,) 法兰目标位置（已补偿安装偏移 + offset_xyz + z 高度补偿，基座系）
         used_network bool 是否采用网络朝向（False = 回退固定朝向）
         deviation_deg 网络朝向与固定朝向的夹角（°）
-        p_palm_base (3,) 掌心位置（基座系，已含 offset_xyz 手动偏移）
+        p_palm_base (3,) 掌心位置（基座系，已含 offset_xyz 手动偏移与 z 高度补偿）
+        z_comp      float 本次应用的基座系 z 高度补偿量（米，键=补偿前命令法兰 z）
 
     offset_rpy_deg : (3,) 基座系旋转调试偏移（度，绕掌心中心），作用于最终执行的
         朝向（网络或固定回退都生效）；在偏差闸门（网络 vs 固定）判定**之后**应用，
         故 deviation_deg 始终是 offset 前的原始值。零偏移完全跳过，逐字节等价旧行为。
+
+    z_comp_knots : [[z, comp_z], ...] 分段线性 z 高度补偿（键=补偿前命令法兰 z，
+        范围外 clamp，只动 z）。None → 读 config；空 → 不补偿，逐字节等价旧行为。
+        与 p_palm_base 同移 Δz（整手刚性平移），不触碰 rpy/approach/deviation。
     """
     if hand_mount_z is None or mount_yaw_deg is None or dev_thresh_deg is None:
         cfg = load_hand_config()
@@ -136,6 +173,8 @@ def compute_grasp_target(grasp, R_c2f, t_c2f, flange_pose,
         offset_xyz = load_offset_xyz()
     if offset_rpy_deg is None:
         offset_rpy_deg = load_offset_rpy_deg()
+    if z_comp_knots is None:
+        z_comp_knots = load_z_comp_knots()
 
     p_palm_cam = np.asarray(grasp["translation"], dtype=float)
     R_f2b = Rotation.from_euler("xyz", flange_pose[:3]).as_matrix()
@@ -185,10 +224,20 @@ def compute_grasp_target(grasp, R_c2f, t_c2f, flange_pose,
     # 安装偏移补偿：法兰位置 = 掌心 − hand_mount_z × 接近方向
     p_flange = p_palm_base - hand_mount_z * approach
 
+    # 基座系 z 方向高度补偿（config z_comp_knots，分段线性，键 = 命令法兰 z = 补偿前）：
+    # 吸收深度/高度相关的经验误差（R_c2f 手眼旋转残差的 z 项）。p_palm_base 同步平移
+    # 保证手刚性（p_flange − p_palm_base = −hand_mount_z·approach 不变），不触碰
+    # rpy/approach/deviation。空锚点 → dz=0 → 逐字节等价旧行为。
+    dz = compute_z_comp(p_flange[2], z_comp_knots)
+    if dz != 0.0:
+        p_flange[2] += dz
+        p_palm_base[2] += dz
+
     return {
         "rpy": rpy,
         "p_flange": p_flange,
         "used_network": used_network,
         "deviation_deg": float(deviation_deg),
         "p_palm_base": p_palm_base,
+        "z_comp": float(dz),
     }

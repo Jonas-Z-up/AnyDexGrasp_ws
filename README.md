@@ -62,9 +62,8 @@ python anydex_eih_grasp.py
 ```bash
 conda activate anydex
 cd ~/Projects/AnyDexGrasp_ws/scripts
-python run_inspire_preview.py --visualize --collision --preprocess \
-    --min_depth 0.2 --max_depth 0.6 \
-    --inspire_mesh_json_path /home/jonas/Projects/AnyDexGrasp/generate_mesh_and_pointcloud/inspire_urdf
+python run_inspire_preview.py --visualize --collision \
+    --min_depth 0.2 --max_depth 0.6
 ```
 预期：弹出 Open3D 窗口显示抓取姿态（红色 Inspire 手 mesh + 蓝色两指夹爪 + 场景点云）。用鼠标检查姿态合理性。
 

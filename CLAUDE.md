@@ -29,6 +29,7 @@ conda activate anydex && cd scripts && python run_inspire_preview.py --visualize
 - `scripts/` — 入口脚本。`anydex_eih_grasp.py` 是主编排器（演示循环），`anydex_eih_grasp_calib.py` 是标定版（`--calib-jog`），`MoveZ1.py` 是 Z1 驱动子进程
 - `anydex_core/` — 不改动的算法库 (models, pointnet2, knn, utils, dataset)
 - `calibration/` — `cam2flange_current.json` (当前眼在手上标定)
+- `assets/` — 静态大资源：`inspire_urdf/`（Inspire 手 mesh/点云/宽度查表，来自上游仓库，git 忽略）、`own_urdf/`（自研手 urdf，入库）
 - `hand_control/` — 自研手串口控制
 - `logs/` — 模型权重 + 推理输出
 

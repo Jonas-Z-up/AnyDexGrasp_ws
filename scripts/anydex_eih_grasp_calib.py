@@ -55,7 +55,9 @@ def _argv_float(name, default):
         return default
 
 
-CALIB_JOG = "--calib-jog" in sys.argv
+# --calib-jog 默认开启：标定版下降到位后必进人工微调停留点(测试 pitch/平移, 空格记录,
+# Esc 退出不抓取)。加 --no-calib-jog 可关闭(回到直接抓取流程)。--calib-jog 仍兼容保留。
+CALIB_JOG = "--no-calib-jog" not in sys.argv
 JOG_HISTORY = _argv_value("--jog-history",
                           os.path.join(WS_ROOT, "logs", "jog_calib_history.jsonl"))
 JOG_STEP_MM = _argv_float("--jog-step-mm", 5.0)
@@ -207,7 +209,7 @@ def main():
     print("=" * 55)
     print("  AnyDexGrasp 眼在手上抓取编排器")
     print("=" * 55)
-    print(f"  [标定] 模式: {'--calib-jog 已启用' if CALIB_JOG else '未启用(不加 --calib-jog 不会记录修正数据)'}")
+    print(f"  [标定] 模式: {'已启用(默认, --no-calib-jog 关闭)' if CALIB_JOG else '未启用(--no-calib-jog)'}")
     print(f"  [标定] 历史文件: {JOG_HISTORY}")
     print(f"  [标定] 空格=记录 / 回车=有微调会补记、没微调跳过 / Esc=中止")
     print("=" * 55)
