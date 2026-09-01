@@ -28,7 +28,7 @@ conda activate anydex && cd scripts && python run_inspire_preview.py --visualize
 ## 目录
 - `scripts/` — 入口脚本。`anydex_eih_grasp.py` 是主编排器（演示循环），`anydex_eih_grasp_calib.py` 是标定版（`--calib-jog`），`MoveZ1.py` 是 Z1 驱动子进程
 - `anydex_core/` — 不改动的算法库 (models, pointnet2, knn, utils, dataset)
-- `calibration/` — `cam2flange_current.json` (当前眼在手上标定)
+- `calibration/` — `cam2flange_current.json` (当前眼在手上标定) + 标定程序（`Move_Key.py` 点动控制器、`hand_in/` 采集/求解/离线验证，自 `Robotic_Hand/HandEyeCalibrate` 迁入；重标流程见 `calibration/README.md`）
 - `assets/` — 静态大资源：`inspire_urdf/`（Inspire 手 mesh/点云/宽度查表，来自上游仓库，git 忽略）、`own_urdf/`（自研手 urdf，入库）
 - `hand_control/` — 自研手串口控制
 - `logs/` — 模型权重 + 推理输出
@@ -55,7 +55,7 @@ conda activate anydex && cd scripts && python run_inspire_preview.py --visualize
 - ✅ 已知系统偏移（已定位并闭环，2026-08-08）：分两层。
   - **层1 getpose 虚报**：`getpose`(FK 读回) 与命令位姿差 **39.4±1.0mm 恒定沿接近轴**（与 42mm 同源）。真机实测法兰物理位置=命令位姿（MoveJ 落点正确）⇒ getpose 是**虚报**，cam→base 改用命令观测位姿 `OBSERVE_RPYXYZ`（a595c2e）**确认正确、不回退**。
   - **层2 主因=手眼外参错误**：`t_cam2flange` 把相机位置算错 **~11cm**（相机实际比外参说的靠前 ~11cm 沿法兰+X、高 ~3cm）。点云与网络已验证正确（网络两指抓点深度 0.383 ≈ 物理尺量 0.38m）；操作员 6 次 jog 修正量反推相机实际位置≈基座 [0.414, 0.03, 0.356]，与尺量吻合。当前 `offset_xyz=[0.072, 0, -0.085]` 即其**总账补偿**（抓取已精确，但改 OBSERVE/动相机需重推）。
-  - ⬜ 外参根修：查棋盘格实际边长是否 12mm（`hand_in_eye_calibrate_by_aq.py --square-size`；边长错会系统性带偏 PnP→外参）→ 修正 `calibration/cam2flange_current.json` 或重标定 → offset 归零重测
+  - ⬜ 外参根修：查棋盘格实际边长是否 12mm（标定程序已在 `calibration/hand_in/`，`python hand_in/hand_in_eye_calibrate_by_aq.py --square-size`；边长错会系统性带偏 PnP→外参）→ 修正 `calibration/cam2flange_current.json` 或重标定（操作流程见 `calibration/README.md`）→ offset 归零重测
 - ⬜ 真机细调闭环（平移已收敛）：`offset_xyz=[0.072, 0, -0.085]` 后抓取已精确；剩余=手眼外参根修（见"已知系统偏移"层2）+ `offset_rpy_deg` 朝向残余的数据积累验证
 - ⬜ 自研手阶段二：需采集试错数据 + 训练专属决策模型
 - ⬜ 自研手 URDF/Mesh 用于碰撞检测
