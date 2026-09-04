@@ -21,8 +21,11 @@
 # Step 1: 相机 → 法兰 (手眼标定矩阵 X)
 p_flange = R_cam2flange @ p_cam + t_cam2flange
 
-# Step 2: 法兰 → 基座 (当前用命令观测位姿 OBSERVE_RPYXYZ 构造 R_flange2base/t_flange2base;
-#          原用 getpose() 实时查询, 因 ~40mm FK 虚报误差已切换, 已确认正确不回退)
+# Step 2: 法兰 → 基座 (用命令观测位姿 OBSERVE_RPYXYZ 构造 R_flange2base/t_flange2base。
+#          历史注: 曾用 getpose() 查询, 观测到 ~38.2mm 偏差并记为"FK 虚报";
+#          2026-09-04 定位真实根因 = ArmInterface(hasGripper=True) 把 FK 末端帧
+#          前移 38.2mm 当夹爪 TCP。Move_Key.py / MoveZ1.py 已改 hasGripper=False,
+#          读回帧 == 命令帧, 两种方式现已等价。用命令位姿仍更稳(不受关节柔顺影响)。
 p_base = R_flange2base @ p_flange + t_flange2base
 ```
 
@@ -76,8 +79,13 @@ cd ~/Projects/unitree_z1/Unitree-Z1_SDK/z1_controller/build && ./z1_ctrl
 ```bash
 conda activate object_locator
 cd calibration
-python Move_Key.py --speed 0.2     # 自动 MoveJ 到准备点 [0, -0.094, 0, 0.2, 0, 0.30]
+python Move_Key.py --speed 0.2     # 自动 MoveJ 到准备点 [0.075, 1.057, 0.073, 0.327, -0.08, 0.35]
 ```
+
+⚠️ 启动后必须看到 **`[自检] 帧一致 ✅`** 才能继续。若报"帧不一致"，说明读回帧 ≠
+命令帧（典型是 `hasGripper` 配错，会让 FK 末端帧前移 38.2mm 当夹爪 TCP），此时
+`P` 打印的位姿是错的，**存进 poses.txt 会让外参沿接近轴整体偏 ~38mm**，且标定报告的
+一致性 RMS 照样好看（系统性偏差在各组间抵消），事后极难发现。
 
 键盘点动：`W/S` ±X（末端系）、`A/D` ±Y、`Q/E` ±Z、`I/K` Roll、`J/L` Pitch、`U/O` Yaw、`P` 打印位姿、`F` 回准备点、`H` 回零、`[` `]`/`-` `=` 步长缩放、`X` 退出。
 按**空格**进入命令模式：`pose r p y x y z`（MoveJ 跳转，推荐）、`jogpose ...`（MoveL 微调）、`step 0.01`、`speed 0.2`、`quit`。退出自动 backToStart 回零。
@@ -148,6 +156,7 @@ python verify_calibration_offline.py   # 复核重投影误差与手眼一致性
 ### 8. 上机验证 + offset 归零重测 ⚠️
 
 - 上机验证可用 `scripts/tools/validate_grasp_setup.py --params/--target/--move` 分步检查
-- **`config/grasp_config.json` 的 `offset_xyz=[0.072, 0, -0.085]` 是对旧外参 ~11cm 误差的总账补偿；外参根修后必须归零重测**，否则双重补偿。按 CLAUDE.md「抓取偏差标定」流程重新 jog 标定得出新 offset
+- **`config/grasp_config.json` 的 `offset_xyz=[0.072, 0, -0.085]` 是"手眼外参 ~11cm 误差 + hasGripper 帧偏移 3.82cm"两层合计的总账补偿；外参根修后必须归零重测**，否则双重补偿。按 CLAUDE.md「抓取偏差标定」流程重新 jog 标定得出新 offset
+- 重标后应只剩外参本身那 ~7.5cm；若新外参正确，jog 标定得出的 offset 应接近 0。若仍有 3~4cm 量级残差，优先怀疑 `hasGripper` 又配回 True（看 Move_Key 启动自检）
 
 ---

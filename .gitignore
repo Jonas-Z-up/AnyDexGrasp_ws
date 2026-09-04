@@ -20,6 +20,13 @@ logs/model/
 # 注意：assets/own_urdf/（自研手 urdf）不受影响，正常提交
 assets/inspire_urdf/
 
+# 标定采集原始图片（体积大不入库；poses.txt 与标定报告 json/txt 仍正常提交）
+# 覆盖 v1/v2 及后续版本的采集目录与 record_realsense.py 的 rgb/depth 输出
+calibration/**/collect_data_in/*.jpg
+calibration/**/collect_data_in/*.png
+calibration/**/rgb/
+calibration/**/depth/
+
 # 编辑器
 .idea/
 .vscode/

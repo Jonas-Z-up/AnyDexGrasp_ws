@@ -44,7 +44,11 @@ class Z1RosController:
             rospy.init_node('z1_pose_controller', anonymous=True)
 
         # 初始化机械臂接口
-        self.arm = unitree_arm_interface.ArmInterface(hasGripper=True)
+        # ⚠️ hasGripper 必须为 False (与 calibration/Move_Key.py 保持一致):
+        # 末端装的是 D435i + 自研手, 没有 Unitree 夹爪。传 True 会让 ArmModel 把
+        # 末端帧(index=6)前移 38.2mm 当作"夹爪 TCP", 使 get_current_flange_pose()
+        # 与 MoveJ/MoveL 的命令帧脱节 (实测读回−命令沿法兰 +X 恒定 38.2mm)。
+        self.arm = unitree_arm_interface.ArmInterface(hasGripper=False)
         self.arm_model = self.arm._ctrlComp.armModel  # FK 模型，用于查询当前末端位姿
         self.arm.loopOn()
         time.sleep(1)
@@ -240,6 +244,10 @@ class Z1RosController:
 
         通过读取关节角 → 正运动学 → homoToPosture 获得，与 Move_Key.py 中
         get_end_posture() 方法一致。
+
+        hasGripper=False 时该值即**法兰安装面**帧，与 MoveJ/MoveL 的命令帧一致，
+        不再有原先 ~38.2mm 的夹爪 TCP 偏移（此前 CLAUDE.md 记为"getpose 虚报
+        39.4mm"，根因其实是 hasGripper 配错，非 FK 问题）。
         """
         q = np.asarray(self.arm.lowstate.getQ(), dtype=float)
         homo = self.arm_model.forwardKinematics(q, 6)

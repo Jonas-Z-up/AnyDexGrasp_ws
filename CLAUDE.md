@@ -47,15 +47,15 @@ conda activate anydex && cd scripts && python run_inspire_preview.py --visualize
 - ✅ 预塑形调试工具 `scripts/tools/test_hand_actions.py`（16 键直达 8 种类型：1-8 预塑形，Q-I 闭合，O 张开）
 - ✅ 抓取朝向（已打通）：执行器"读网络 `rotation_matrix` + 安装偏移补偿（`hand_mount_z`）+ 角度偏差保护"已工作——`mount_yaw_deg=-90°` 修正后网络朝向偏差可低至 9.1°（真机实测），会采用网络朝向。偏差 = 命令法兰朝向与固定朝向（兜底）的夹角，超过 config `orient_deviation_thresh_deg`（当前 90°）回退固定朝向；预览绿框=采用网络朝向、橙框=回退固定朝向
 - ✅ 真机验证工具 `scripts/tools/validate_grasp_setup.py`：`--params` 打印参数/方向，`--target` 计算目标位姿，`--move` 移到检查位姿；**第 1 步静态朝向真机验证已通过**（指尖前下/掌心朝下/Ctrl+C 先回零）
-- ✅ 根因验证工具 `scripts/tools/verify_z1_pose.py`：自动化对比 getpose vs 命令位姿（到位稳定/姿态扫描/物理尺量三测），结果写入 `logs/pose_verify_history.jsonl`；已实测 getpose 沿接近轴恒定偏 ~39.4mm（见下方"已知系统偏移"）
+- ✅ 根因验证工具 `scripts/tools/verify_z1_pose.py`：自动化对比 getpose vs 命令位姿（到位稳定/姿态扫描/物理尺量三测），结果写入 `logs/pose_verify_history.jsonl`；实测 getpose 恒定偏 ~38.2mm——根因是 `hasGripper` 配错，**已修**（见下方"已知系统偏移"层1）
 - ⚠️ 碰撞检测默认开启，偶尔滤掉全部候选（预处理后应改善）
 - ⚠️ `--preprocess` 会把桌面从点云和碰撞检测中一并滤除，**无指尖/掌心防穿桌检查**（只剩 MoveZ1 法兰 z≥0.12 兜底，指尖仍可能穿桌）；下降过程可按 **Space/Esc** 暂停接管人工微调避免碰撞
 - ✅ 网络朝向真机执行验证（进行中）：偏差 ≤ config `orient_deviation_thresh_deg`（当前 90°）即采用网络朝向；真机已多次执行网络朝向抓取。指尖落点修正：`hand_mount_z` 0.12→0.09（整手沿接近轴推深）+ `offset_xyz` 基座系水平偏移（当前 [0.072, 0.0, -0.085]）
 - ✅ 抓取偏差标定工具：`anydex_eih_grasp_calib.py --calib-jog` 到达抓取点后进入键盘微调（w/s/a/d/q/e 基座系 XYZ + **r/f 俯仰**绕法兰中心，`+`/`-` 切平移步长 2/5/10mm 默认 5mm，`--jog-pitch-step-deg` 默认 1°），空格记录调整前后**命令位姿**与偏移（offset=操作员调整量）到 `logs/jog_calib_history.jsonl`（`--jog-history` 可改路径），回车在有微调时也会补记（防顺手按回车导致数据静默丢弃），`analyze_jog_history.py` 汇总恒定偏置/接近轴/深度相关/朝向残余四类误差并给出 `offset_xyz`/`hand_mount_z`/`offset_rpy_deg`(pitch) 建议
-- ✅ 已知系统偏移（已定位并闭环，2026-08-08）：分两层。
-  - **层1 getpose 虚报**：`getpose`(FK 读回) 与命令位姿差 **39.4±1.0mm 恒定沿接近轴**（与 42mm 同源）。真机实测法兰物理位置=命令位姿（MoveJ 落点正确）⇒ getpose 是**虚报**，cam→base 改用命令观测位姿 `OBSERVE_RPYXYZ`（a595c2e）**确认正确、不回退**。
-  - **层2 主因=手眼外参错误**：`t_cam2flange` 把相机位置算错 **~11cm**（相机实际比外参说的靠前 ~11cm 沿法兰+X、高 ~3cm）。点云与网络已验证正确（网络两指抓点深度 0.383 ≈ 物理尺量 0.38m）；操作员 6 次 jog 修正量反推相机实际位置≈基座 [0.414, 0.03, 0.356]，与尺量吻合。当前 `offset_xyz=[0.072, 0, -0.085]` 即其**总账补偿**（抓取已精确，但改 OBSERVE/动相机需重推）。
-  - ⬜ 外参根修：查棋盘格实际边长是否 12mm（标定程序已在 `calibration/hand_in/`，`python hand_in/hand_in_eye_calibrate_by_aq.py --square-size`；边长错会系统性带偏 PnP→外参）→ 修正 `calibration/cam2flange_current.json` 或重标定（操作流程见 `calibration/README.md`）→ offset 归零重测
+- ✅ 已知系统偏移（2026-09-04 更新）：分两层，**层1 已根修**。
+  - **层1 = `hasGripper` 配错导致 38.2mm 帧偏移（已修）**：**不是 FK 虚报**。末端装的是 D435i + 自研手、**没有 Unitree 夹爪**，但 `Move_Key.py`/`MoveZ1.py` 用 `ArmInterface(hasGripper=True)` 连接，SDK 会把 FK 末端帧（index=6）从法兰安装面前移 **38.2mm** 当作"夹爪 TCP"（SDK 实测 q=0：False→`[0.049,0,0.1605]`，True→`[0.0872,0,0.1605]`）。真机 `verify_z1_pose.py` 的 scan 数据把误差投影到法兰 +X：pitch=0/0.4/0.8 → **38.20/38.24/38.47 mm**，完全吻合（原记"39.4±1.0mm 沿接近轴"即此）。→ 两处已改 `hasGripper=False`，读回帧 == 命令帧；`Move_Key.py` 启动新增 `check_frame_consistency()` 自检（3mm/1°，配错即报错）。**`getpose`/`P` 键位姿现在可直接用于标定**。代价：因标定时存的是 TCP 帧位姿，旧外参里混入了这 3.82cm，必须重标。
+  - **层2 = 手眼外参错误（待重标）**：`t_cam2flange` 把相机位置算错 **~11cm 沿法兰+X / ~3cm 高**。扣除层1 的 3.82cm 后**仍剩 ~7.5cm 属外参本身**，只能靠重标消除。点云与网络已验证正确（网络两指抓点深度 0.383 ≈ 物理尺量 0.38m）；6 次 jog 反推相机实际位置≈基座 [0.414, 0.03, 0.356]。当前 `offset_xyz=[0.072, 0, -0.085]` 是**两层合计**的总账补偿（外参根修后必须归零重测）。
+  - ⬜ 外参根修（重标定，v2 管线在 `calibration/v2/`）。**重标前必做三项**：①尺量 ChArUco 方格/ArUco 码实际边长（默认 35/26mm 未验证；用单图 PnP 的 `|t|` 对尺量距离自检——ChArUco 有绝对尺度，这是它优于普通棋盘格之处）；②补 `config/realsense_intrinsics.json` 的 `distortion_coefficients`（现为全零，D435i 实际有畸变）；③姿态激励要足（旧序列 pitch 全程仅变 2.3°，纯平移对 R 零贡献 ⇒ R 不可观）。另注意：一致性 RMS 是相对指标，对上述系统性偏差**不敏感**（旧结果 7.7mm 看着健康，外参却错了 11cm），必须有尺量等绝对基准
 - ⬜ 真机细调闭环（平移已收敛）：`offset_xyz=[0.072, 0, -0.085]` 后抓取已精确；剩余=手眼外参根修（见"已知系统偏移"层2）+ `offset_rpy_deg` 朝向残余的数据积累验证
 - ⬜ 自研手阶段二：需采集试错数据 + 训练专属决策模型
 - ⬜ 自研手 URDF/Mesh 用于碰撞检测

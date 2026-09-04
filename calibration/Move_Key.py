@@ -9,6 +9,15 @@ Z1 混合控制器: 键盘点动 + 命令输入 + 位姿服务
 
 启动时自动 MoveJ 到准备点。
 pose 命令直接 MoveJ 到目标 (关节空间插值, 终点 IK 始终可解)。
+
+位姿帧说明 (重要, 关系到手眼标定的正确性)
+----------------------------------------
+本文件用 ArmInterface(hasGripper=False) 连接机械臂, 因此 get_end_posture()
+(FK 读回) 与 MoveJ/MoveL 的**命令帧**是同一个帧 —— 法兰安装面。
+
+若误用 hasGripper=True, FK 末端帧会前移 38.2mm 当作"夹爪 TCP", 两者脱节:
+点动基准跳变, 且按 P 打印的位姿会让标定外参沿接近轴整体偏 ~38mm。
+启动时会自动跑 check_frame_consistency() 拦截这种情况。
 """
 
 import argparse
@@ -135,7 +144,8 @@ def print_help():
     print("  W/S: +X/-X   A/D: -Y/+Y   Q/E: +Z/-Z")
     print("  I/K: Roll+/-   J/L: Pitch-/+   U/O: Yaw-/+")
     print("  [ / ]: XYZ步长减半/加倍    - / =: RPY步长减半/加倍")
-    print("  P: 打印当前位姿   F: 回准备点   H: 回零位   X: 退出")
+    print("  P: 打印当前法兰位姿(可直接粘贴到采集脚本)   F: 回准备点")
+    print("  H: 回零位   X: 退出")
     print()
     print("命令模式 (按 空格键 进入):")
     print("  pose r p y x y z     直接MoveJ到目标   [推荐, 关节空间始终可达]")
@@ -184,8 +194,16 @@ class Z1HybridController:
             print(f"[初始化] Pose 服务器已启动: {pose_server_path}")
 
         # 连接机械臂
+        # ⚠️ hasGripper 必须为 False: 末端装的是 D435i + 自研手, 没有 Unitree 夹爪。
+        # 传 True 会让 ArmModel 把末端帧(index=6)从法兰安装面前移 38.2mm 当作"夹爪 TCP",
+        # 于是 get_end_posture() 与 MoveJ/MoveL 的**命令帧**不再重合:
+        #   - 首次点动会以错误的基准跳 38.2mm
+        #   - 按 P 打印的位姿存进 poses.txt → 标定出的外参沿接近轴整体偏 38.2mm
+        #     (这正是 CLAUDE.md 里"getpose 与命令位姿差 39.4±1.0mm"的根因, 不是 FK 虚报)
+        # 注: 下方 MoveJ/MoveL 仍传 gripperPos=0.0 (三参数重载) —— hasGripper=False 时
+        #     夹爪通道不存在, 该参数被忽略; 保持原调用形式以最小化改动。
         print("\n[初始化] 连接 Z1 机械臂...")
-        self.arm = unitree_arm_interface.ArmInterface(hasGripper=True)
+        self.arm = unitree_arm_interface.ArmInterface(hasGripper=False)
         self.arm_model = self.arm._ctrlComp.armModel
         self.arm.loopOn()
         time.sleep(1.0)
@@ -199,10 +217,13 @@ class Z1HybridController:
             if not ok:
                 print("[警告] 初始 MoveJ 到准备点失败, 尝试继续...")
             time.sleep(0.5)
+            # 帧一致性自检: 必须在 reset_target_from_current() 之前, 否则基准被 FK 覆盖
+            self.check_frame_consistency(self.start_pose)
         else:
             print("[初始化] 跳过初始移动, 仅初始化 FSM...")
             self.arm.setFsm(unitree_arm_interface.ArmFSMState.JOINTCTRL)
             time.sleep(0.2)
+            print("[初始化] 跳过帧自检 (无命令参考位姿)")
 
         self.reset_target_from_current()
         print("[初始化] ✅ Z1 就绪\n")
@@ -213,13 +234,59 @@ class Z1HybridController:
         return np.asarray(self.arm.lowstate.getQ(), dtype=float)
 
     def get_end_posture(self):
-        """从关节角 FK 计算实际末端位姿 [r,p,yaw,x,y,z]."""
+        """从关节角 FK 计算实际末端位姿 [r,p,yaw,x,y,z].
+
+        hasGripper=False 时该位姿即**法兰安装面**帧, 与 MoveJ/MoveL 的命令帧一致,
+        可直接作为标定用的法兰位姿 (按 P 打印 → 粘到采集脚本)。
+        """
         q = self.get_joint_q()
         homo = self.arm_model.forwardKinematics(q, 6)
         posture = unitree_arm_interface.homoToPosture(homo)
         return np.asarray(posture, dtype=float)
 
+    def check_frame_consistency(self, pose_cmd=None, tol_mm=3.0, tol_deg=1.0):
+        """校验 FK 读回帧与命令帧是否重合。
+
+        ArmInterface(hasGripper=True) 会把 FK 末端帧前移 38.2mm (夹爪 TCP), 使
+        get_end_posture() 与命令帧脱节; 此时若把读回值当作法兰位姿存进 poses.txt,
+        手眼外参会沿接近轴整体偏 ~38mm, 且标定报告的一致性 RMS 依旧很好看
+        (系统性偏差在各组间互相抵消), 极难事后发现。故启动时强制自检。
+
+        pose_cmd: 参考命令位姿, 默认 self.target_pose。
+        返回 (ok, pos_err_mm, rpy_err_deg)。
+        """
+        if pose_cmd is None:
+            if not hasattr(self, "target_pose"):
+                print("[自检] 跳过: 无命令参考位姿")
+                return True, 0.0, 0.0
+            pose_cmd = self.target_pose
+        pose_cmd = np.asarray(pose_cmd, dtype=float)
+
+        pose_fk = self.get_end_posture()
+        d = pose_fk - pose_cmd
+        pos_err_mm = float(np.linalg.norm(d[3:6]) * 1000.0)
+        rpy_err_deg = float(np.degrees(np.abs(d[:3])).max())
+        ok = pos_err_mm <= tol_mm and rpy_err_deg <= tol_deg
+
+        if ok:
+            print(f"[自检] 帧一致 ✅  读回−命令: {pos_err_mm:.2f} mm / {rpy_err_deg:.2f} deg")
+            return ok, pos_err_mm, rpy_err_deg
+
+        print("\n" + "!" * 64)
+        print(f"[自检] 帧不一致 ❌  读回−命令: {pos_err_mm:.2f} mm / {rpy_err_deg:.2f} deg")
+        print("  FK 读回帧与命令帧不重合, 位姿不可用于标定。")
+        print("  最常见原因: ArmInterface(hasGripper=True) —— 末端装的是相机/自研手,")
+        print("  没有 Unitree 夹爪, 该参数会让 FK 末端帧沿法兰 +X 前移 38.2mm。")
+        print("  请检查本文件构造 ArmInterface 处是否为 hasGripper=False。")
+        print("!" * 64 + "\n")
+        return ok, pos_err_mm, rpy_err_deg
+
     def reset_target_from_current(self):
+        """用 FK 读回值重建点动基准。
+
+        仅在 hasGripper=False (读回帧 == 命令帧) 时安全; 否则会把 38.2mm 的
+        帧偏差写进 target_pose, 第一次 MoveL 点动直接跳出去。
+        """
         self.target_pose = self.get_end_posture()
 
     # ── 安全检查 ──────────────────────────────────────────
