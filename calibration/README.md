@@ -33,40 +33,49 @@ p_base = R_flange2base @ p_flange + t_flange2base
 
 `0 1.057 0 0.3 0 0.35` (roll pitch yaw x y z) — Z1 移动到该位姿后进行场景拍摄和抓取计算。
 
+### 标定历史
+
+| 日期 | 方案 | 结果 |
+|------|------|------|
+| 2026-09-05 | v2 ChArUco（9x9 / 50mm / 37mm / DICT_4X4_50），21 组 | DANIILIDIS 选优：位置 RMS 2.99mm / 旋转 RMS 0.394°（自洽）；离线复测 10 组（剔 1 组角点不足导致的离群）位置 RMS 3.11mm，板位置复现差 0.7mm。报告见 `v2/measured_data_in/calibration_report.json`。`cam2flange_current.json` 尚未更新 |
+
 ---
 
 ## 标定程序
 
-手眼标定工具链已从 `Robotic_Hand/Robotic_Hand/HandEyeCalibrate` 迁入本目录：
+当前方案（v2，ChArUco 标定板）：
 
 | 文件 | 作用 |
 |------|------|
 | `Move_Key.py` | Z1 键盘点动控制器（直连 SDK + Unix-socket 位姿服务 `/tmp/z1_pose_server.sock`） |
 | `z1_pose_client.py` | Move_Key 的位姿 IPC 共享模块（须与 Move_Key.py 同目录） |
-| `hand_in/data_collect_manual.py` | D435i 图像 + 机械臂位姿采集（输出到 `hand_in/collect_data_in/`） |
-| `hand_in/hand_in_eye_calibrate_by_aq.py` | 主求解器（HORAUD/PARK/TSAI/DANIILIDIS/ANDREFF 五法对比，输出到 `hand_in/measured_data_in_4/`） |
-| `hand_in/verify_calibration_offline.py` | 用采集数据离线复验标定结果 |
+| `v2/data_collect_manual.py` | D435i 图像 + 机械臂位姿采集（手动输入位姿版，输出到 `v2/collect_data_in/`） |
+| `v2/hand_in_eye_ChArUco.py` | 主求解器 — ChArUco 检测 + PnP，TSAI/PARK/HORAUD/ANDREFF/DANIILIDIS 五法对比自动选优，输出到 `v2/measured_data_in/` |
+| `v2/verify_calibration_v2.py` | 离线复验：用未参与标定的新位姿测泛化精度（`--exclude-groups` 剔除离群组） |
+| `v2/verify_on_robot.py` | 真机在线验证：实时推算板特征点基座系坐标（多位姿聚合 + 到达测试） |
+| `v2/test_poses.txt` | 标定激励位姿序列（20 组基准 + 补充位姿，含可达性备注） |
+| `v1/hand_in/` | 旧方案（普通棋盘格 + OpenCV 旧 API），已弃用仅存档 |
 
 说明：
 - **运行环境：`object_locator`**（cv2 4.10）。求解一步必须用它——`anydex` 的 cv2 是 5.0，既没有 `cv2.calibrateHandEye`，`solvePnP` 还会在部分尺度下发散到错误局部解（实测 12mm 时重投影 138px；cv2 4.10 同数据 0.5px）。Move_Key/数据采集在 anydex 也能跑，但统一用 object_locator 最省心
 - `Move_Key.py` 通过绝对路径加载 Z1 SDK（`~/Projects/unitree_z1/.../z1_sdk/lib`），不受本目录位置影响
-- `hand_in/` 内脚本均用相对本脚本的路径，采集数据落在 `hand_in/collect_data_in/`，求解输出落在 `hand_in/measured_data_in_4/`
+- `v2/` 内脚本均用相对本脚本的路径：采集数据落在 `v2/collect_data_in/`，求解输出落在 `v2/measured_data_in/`，**采集、求解、复测都必须在 `v2` 目录下运行**
 - 内参默认取 `../config/realsense_intrinsics.json`（与抓取管线共用）
+- 标定板：calib.io ChArUco，9x9 方格 / 方格 50mm / marker 37mm / DICT_4X4_50，marker 印在全部白格共 40 个（ID 0-39）。板参数已写入 `v2` 两个脚本的默认值，已与实物（`v2/ChArUco.jpeg`）做过生成比对 + 检测验证（40 marker / 64 角点全部识别）
 
 ---
 
-## 重新标定操作流程
+## 重新标定操作流程（v2 ChArUco）
 
-### 0. 标定前必查：棋盘格边长（只能尺量）
+### 0. 标定前必查
 
 ```bash
-# 先用尺量棋盘格实际边长！ --square-size 默认 0.012 (12mm) 只是历史假设值
-python hand_in/hand_in_eye_calibrate_by_aq.py --help   # 确认 --square-size / --pattern-cols / --pattern-rows
+# ① 尺量棋盘格实际边长！v2 脚本默认 0.050 (50mm) 只是标称值。
+#    方格边长错多少，PnP 平移就按比例带偏 t_cam2flange（旋转不受影响、RMS 照样好看），
+#    离线复验测不出这种全体系统性偏差，只能靠尺量排除。
+# ② 板子平贴固定（45cm 大板易翘弯，背后垫硬板压平），避免灯光直射板面（反光会吞角点）。
+python v2/hand_in_eye_ChArUco.py --help   # 确认 --squares-x/y / --square-size / --marker-size
 ```
-
-⚠️ 图片**无法**自检边长：重投影误差对棋盘尺度不敏感（实测 6-40mm 全部 ~0.5px，平面 PnP 尺度不变）。
-但边长错多少，PnP 解出的平移就按比例带偏 `t_cam2flange`，只能靠尺量排除。
-（旁证：上次 12mm 假设下手眼一致性 RMS 7.7mm 属健康水平，尺度大错会显著放大该值，故尺度偏差估计在 ~10% 以内。）
 
 ### 1. 终端1：Z1 底层控制器
 
@@ -78,7 +87,7 @@ cd ~/Projects/unitree_z1/Unitree-Z1_SDK/z1_controller/build && ./z1_ctrl
 
 ```bash
 conda activate object_locator
-cd calibration
+cd /home/jonas/Projects/AnyDexGrasp_ws/calibration
 python Move_Key.py --speed 0.2     # 自动 MoveJ 到准备点 [0.075, 1.057, 0.073, 0.327, -0.08, 0.35]
 ```
 
@@ -90,73 +99,69 @@ python Move_Key.py --speed 0.2     # 自动 MoveJ 到准备点 [0.075, 1.057, 0.
 键盘点动：`W/S` ±X（末端系）、`A/D` ±Y、`Q/E` ±Z、`I/K` Roll、`J/L` Pitch、`U/O` Yaw、`P` 打印位姿、`F` 回准备点、`H` 回零、`[` `]`/`-` `=` 步长缩放、`X` 退出。
 按**空格**进入命令模式：`pose r p y x y z`（MoveJ 跳转，推荐）、`jogpose ...`（MoveL 微调）、`step 0.01`、`speed 0.2`、`quit`。退出自动 backToStart 回零。
 
-### 3. 终端3：数据采集
+### 3. 终端3：数据采集（必须在 v2 目录下运行）
 
 ```bash
 conda activate object_locator
-cd calibration/hand_in
+cd calibration/v2
 python data_collect_manual.py    # 按 S → 粘贴终端2 的 6 个数 (r p y x y z) → 存图+poses.txt；Q 退出
 ```
+
+注意：图片编号与 poses.txt 行号严格一一对应（`0.jpg` ↔ 第 1 行），中途不要手动删图或改 poses.txt（输入出错不保存不会破坏对齐）。
 
 ### 4. 循环采集 15-25 组
 
 推荐混合操作：命令模式 `pose` 跳到目标附近 → 键盘微调对位 → `P` 打印 → 终端3 按 `S` 粘贴保存。
-要点：标定板覆盖视野不同位置/角度；画面清晰无运动模糊。
+要点：
+- **标定板全程固定不动**（板/基座间任何相对移动直接毁数据对），板面压平
+- 激励位姿序列见 `v2/test_poses.txt`；**旋转多样性（roll/pitch/yaw 多向）比平移更重要**，"极端姿态激励"几条别省略
+- 每组保存前看预览：板子大部分在画面内、无严重反光、机械臂完全停稳（运动模糊毁角点）
+- 单帧识别角点 <15 的组不要保存（求解门槛虽是 4 角点，但少角点 PnP 易解翻转，混进坏组事后难查）
 
-历史文档记录的激励位姿序列（`pose r p y x y z`，标注 1-20 组、实际收录 18 条；第 14 条 y=-0.520 疑似原文笔误，采集时自行斟酌）：
-
-```
-# 1-3 组 (基准与初步变位)
-pose 0.075 1.057 0.073 0.327 -0.08 0.35
-pose 0.075 1.057 -0.15 0.35 0.08 0.25
-pose -0.075 1.057 0.2 0.327 -0.1 0.35
-# 4-9 组 (四角极限与中心，增加 Y 轴微调以引入深度变化)
-pose 0.000 1.057 0.000 0.340 0.000 0.300
-pose 0.100 0.920 0.100 0.3 -0.050 0.320
-pose -0.100 1.040 0.100 0.250 0.050 0.400
-pose 0.100 1.040 -0.100 0.350 -0.100 0.250
-pose -0.300 1.040 -0.300 0.360 0.100 0.200
-pose 0.000 1.070 0.150 0.300 -0.120 0.380
-# 10-15 组 (强化 Z 轴和 X 轴的独立平移，配合小幅旋转)
-pose -0.050 1.070 -0.200 0.380 0.120 0.220
-pose 0.080 1.030 0.050 0.350 -0.050 0.250
-pose -0.080 1.080 0.050 0.310 0.050 0.350
-pose 0.020 1.050 0.180 0.280 -0.150 0.320
-pose -0.020 1.060 -0.520 0.420 0.150 0.220
-pose 0.060 1.057 0.000 0.370 0.000 0.280
-# 16-20 组 (极端姿态激励，确保旋转矩阵 R 的多向性)
-pose -0.060 1.057 0.000 0.290 0.000 0.320
-pose 0.000 1.045 0.120 0.360 -0.080 0.380
-pose 0.000 0.98 -0.080 0.350 0.020 0.190
-```
-
-### 5. 求解（必须 object_locator）
+### 5. 求解（必须 object_locator，必须在 v2 目录下）
 
 ```bash
-conda activate object_locator
-cd calibration/hand_in
-python hand_in_eye_calibrate_by_aq.py --square-size 0.012   # ← 换成尺量值！
-# 可选: --data-dir <目录> --intrinsics-json <路径> --show-corners
-# 五种方法 RMS 对比后自动选优，输出 hand_in/measured_data_in_4/calibration_report.json
+cd calibration/v2
+python hand_in_eye_ChArUco.py            # 可加 --show-corners（仅实时预览，不存图）
+# 可选: --data-dir <目录> --intrinsics-json <路径> --squares-x/y --square-size --marker-size
+# 五种方法 RMS 对比后自动选优，输出 v2/measured_data_in/calibration_report.json + all_candidate.txt
 ```
 
-自检：日志里的 `PnP 重投影误差` 应为 **~0.5px** 量级；若飙到几十上百 px，说明 solvePnP 发散（cv2 5.0 环境的典型症状），换 object_locator 重跑。
+自检：
+- 日志中各组识别角点数应普遍 ≥25
+- 位置 RMS < 5mm（阈值 `--max-position-rms`）、旋转 RMS < 1°（`--max-rotation-rms`）
+- 五种方法的 RMS 应彼此接近（如位置 RMS 都在 3-4mm）；明显分叉说明有坏数据对
 
-### 6. 离线验证
+### 6. 验证（离线复测 + 真机验证）
+
+**6a. 离线复测（泛化精度）**：保持标定板不动，用**全新位姿**再采 8-10 组到独立目录
+（临时改 `data_collect_manual.py` 的 `IMAGE_SAVE_PATH` 为 `./collect_data_verify/`），然后：
 
 ```bash
-conda activate object_locator
-python verify_calibration_offline.py   # 复核重投影误差与手眼一致性
+python verify_calibration_v2.py --data-dir collect_data_verify
+# 有离群组时: --exclude-groups 5,8  剔除后重算（脚本会把偏差 >10mm 的组标为离群嫌疑）
 ```
+
+判读：位置 RMS < 5mm 且与标定自洽水平相当 → 泛化可信；对比剔除离群组前后的板位置均值还能确认板子中途没被碰动。
+
+**6b. 真机在线验证（最终验收）**：终端2 的 Move_Key 保持运行（提供位姿服务），然后：
+
+```bash
+cd calibration/v2
+python verify_on_robot.py --show-window
+```
+
+- **多位姿聚合**：板固定，机械臂换 3-5 个差异大的位姿各按空格，推算的板特征点基座系坐标散布 RMS < 5mm → 手眼链路真机上稳定
+- **到达测试**：用退出时汇总的板中心坐标，在 Move_Key 命令模式执行 `pose <当前r> <当前p> <当前y> <板中心x> <板中心y> <板中心z+0.05>`（抬高 5cm 接近），到位后目视法兰对中、尺量偏差——这是抓取管线真实吃到的误差
+- **绝对位置抽查**：卷尺量板特征点相对 Z1 基座原点的实际位置与推算均值对比（推算的"板位置"指棋盘图案外角原点；板中心 = 图案外角各进 22.5cm）。这是唯一能暴露尺度/系统性偏差的检查
 
 ### 7. 更新标定文件
 
-把 `measured_data_in_4/` 选中解的 `rotation_matrix_3x3.txt` / `translation_vector_3x1.txt` 写入 `cam2flange_current.json` 的 `R_cam2flange` / `t_cam2flange`（连同方法名、RMS、日期），并把整份 `calibration_report.json` 归档到 `measured_results/`。执行链路（执行器/预览/验证）无需改代码。
+把 `v2/measured_data_in/calibration_report.json` 中选中解的 `rotation` / `translation` 写入 `cam2flange_current.json` 的 `R_cam2flange` / `t_cam2flange`（连同方法名、RMS、日期），并把整份 `calibration_report.json` 归档到 `measured_results/`。执行链路（执行器/预览/验证）无需改代码。
 
 ### 8. 上机验证 + offset 归零重测 ⚠️
 
 - 上机验证可用 `scripts/tools/validate_grasp_setup.py --params/--target/--move` 分步检查
-- **`config/grasp_config.json` 的 `offset_xyz=[0.072, 0, -0.085]` 是"手眼外参 ~11cm 误差 + hasGripper 帧偏移 3.82cm"两层合计的总账补偿；外参根修后必须归零重测**，否则双重补偿。按 CLAUDE.md「抓取偏差标定」流程重新 jog 标定得出新 offset
-- 重标后应只剩外参本身那 ~7.5cm；若新外参正确，jog 标定得出的 offset 应接近 0。若仍有 3~4cm 量级残差，优先怀疑 `hasGripper` 又配回 True（看 Move_Key 启动自检）
+- **`config/grasp_config.json` 的 `offset_xyz=[0.072, 0, -0.085]` 是对旧外参 ~11cm 误差的总账补偿；外参根修后必须归零重测**，否则双重补偿。按 CLAUDE.md「抓取偏差标定」流程重新 jog 标定得出新 offset
 
 ---

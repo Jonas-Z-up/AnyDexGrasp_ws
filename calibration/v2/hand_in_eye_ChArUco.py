@@ -2,6 +2,7 @@
 """
 Z1 + RealSense D435i 眼在手上 (Eye-in-Hand) 标定脚本
 专属 ChArUco 标定板版本 (深度适配 OpenCV 4.10)
+- 支持自动将角点检测与位姿可视化图片保存到磁盘
 """
 
 import os
@@ -52,7 +53,7 @@ def save_matrices_to_txt(matrices_dict, output_dir, filename="all"):
                         f.write(", ")
                 f.write("]" + (",\n" if i < rows - 1 else "\n"))
             f.write("]\n" + ("\n" if idx < len(matrices_dict) - 1 else ""))
-    print(f"已保存数据到: {filepath}")
+    print(f"已保存矩阵数据到: {filepath}")
 
 def process_arm_pose(arm_pose_file):
     arm_poses = {}
@@ -74,11 +75,15 @@ def process_arm_pose(arm_pose_file):
     print(f"成功读取 {len(arm_poses)} 组机械臂位姿数据")
     return arm_poses
 
-def camera_calibrate_charuco_410(images_path, board, detector, camera_matrix, dist_coeffs, show_corners=False):
-    """基于 OpenCV 4.10 CharucoDetector 的位姿提取"""
+def camera_calibrate_charuco_410(images_path, board, detector, camera_matrix, dist_coeffs, 
+                                 save_vis_dir=None, show_corners=False):
+    """基于 OpenCV 4.10 CharucoDetector 的位姿提取，并保存可视化图片"""
     print("++++++++++ 开始 ChArUco 位姿估计 (OpenCV 4.10) ++++++++++++++")
     image_files = [f for f in os.listdir(images_path) if f.endswith('.jpg')]
     image_files.sort(key=lambda x: int(os.path.splitext(x)[0]))
+
+    if save_vis_dir:
+        os.makedirs(save_vis_dir, exist_ok=True)
 
     valid_cam_poses = {}
 
@@ -93,7 +98,6 @@ def camera_calibrate_charuco_410(images_path, board, detector, camera_matrix, di
 
         # 至少 4 个角点进行 PnP 求解
         if charuco_ids is not None and len(charuco_ids) >= 4:
-            # 匹配 3D 物方坐标与 2D 像方坐标
             obj_points, img_points = board.matchImagePoints(charuco_corners, charuco_ids)
             solved, rvec, tvec = cv2.solvePnP(
                 obj_points, img_points, camera_matrix, dist_coeffs, flags=cv2.SOLVEPNP_ITERATIVE
@@ -102,10 +106,21 @@ def camera_calibrate_charuco_410(images_path, board, detector, camera_matrix, di
                 valid_cam_poses[idx] = (rvec, tvec)
                 print(f"  [√] 图片 {f} 识别成功 (识别角点数: {len(charuco_ids)})")
 
+                # 绘制可视化图像
+                vis_img = img.copy()
+                # 绘制 ArUco 标记框
+                cv2.aruco.drawDetectedMarkers(vis_img, marker_corners, marker_ids)
+                # 绘制 ChArUco 棋盘格角点
+                cv2.aruco.drawDetectedCornersCharuco(vis_img, charuco_corners, charuco_ids)
+                # 绘制标定板 3D 坐标轴 (红:X, 绿:Y, 蓝:Z，轴长 0.05m)
+                cv2.drawFrameAxes(vis_img, camera_matrix, dist_coeffs, rvec, tvec, 0.05)
+
+                # 保存可视化图片到磁盘
+                if save_vis_dir:
+                    save_path = os.path.join(save_vis_dir, f"det_{f}")
+                    cv2.imwrite(save_path, vis_img)
+
                 if show_corners:
-                    vis_img = img.copy()
-                    cv2.aruco.drawDetectedCornersCharuco(vis_img, charuco_corners, charuco_ids)
-                    cv2.drawFrameAxes(vis_img, camera_matrix, dist_coeffs, rvec, tvec, 0.05)
                     cv2.imshow("ChArUco PnP", vis_img)
                     cv2.waitKey(200)
                 continue
@@ -113,6 +128,8 @@ def camera_calibrate_charuco_410(images_path, board, detector, camera_matrix, di
         print(f"  [X] 图片 {f} 识别角点不足，跳过。")
 
     cv2.destroyAllWindows()
+    if save_vis_dir:
+        print(f"✅ 所有有效检测可视化图片已保存至: {save_vis_dir}")
     return valid_cam_poses
 
 def make_transform(rotation, translation):
@@ -154,9 +171,11 @@ def evaluate_hand_eye(rotation, translation, R_arm, t_arm, R_target, t_target):
         "rotation_max_deg": float(np.max(rotation_errors)),
     }
 
-def hand_eye_calibrate(images_path, arm_pose_file, board, detector, camera_matrix, dist_coeffs, show_corners=False):
+def hand_eye_calibrate(images_path, arm_pose_file, board, detector, camera_matrix, dist_coeffs, 
+                       save_vis_dir=None, show_corners=False):
     valid_cam_poses = camera_calibrate_charuco_410(
-        images_path, board, detector, camera_matrix, dist_coeffs, show_corners=show_corners
+        images_path, board, detector, camera_matrix, dist_coeffs, 
+        save_vis_dir=save_vis_dir, show_corners=show_corners
     )
     arm_poses_dict = process_arm_pose(arm_pose_file)
 
@@ -210,13 +229,14 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Z1 眼在手上手眼标定 (ChArUco - OpenCV 4.10)")
     parser.add_argument("--data-dir", default=None)
     # ChArUco 标定板参数
-    parser.add_argument("--squares-x", type=int, default=7, help="横向方格数")
+    parser.add_argument("--squares-x", type=int, default=9, help="横向方格数")
     parser.add_argument("--squares-y", type=int, default=9, help="纵向方格数")
-    parser.add_argument("--square-size", type=float, default=0.035, help="方格物理边长 (米)")
-    parser.add_argument("--marker-size", type=float, default=0.026, help="ArUco 码物理边长 (米)")
+    parser.add_argument("--square-size", type=float, default=0.050, help="方格物理边长 (米)")
+    parser.add_argument("--marker-size", type=float, default=0.037, help="ArUco 码物理边长 (米)")
     parser.add_argument("--aruco-dict", type=str, default="DICT_4X4_50", help="ArUco 字典类型")
     parser.add_argument("--intrinsics-json", default=None)
-    parser.add_argument("--show-corners", action="store_true")
+    parser.add_argument("--show-corners", action="store_true", help="是否实时弹窗显示检测界面")
+    parser.add_argument("--no-save-vis", action="store_true", help="是否禁用保存检测可视化图片")
     parser.add_argument("--max-position-rms", type=float, default=0.005)
     parser.add_argument("--max-rotation-rms", type=float, default=1.0)
     return parser.parse_args()
@@ -232,6 +252,9 @@ if __name__ == "__main__":
     ARM_POSE_FILE = os.path.join(IMAGES_DIR, 'poses.txt')
     INTRINSICS_JSON = args.intrinsics_json or "/home/jonas/Projects/AnyDexGrasp_ws/config/realsense_intrinsics.json"
     OUTPUT_DIR = os.path.join(current_dir, 'measured_data_in')
+
+    # 可视化图片保存目录
+    VIS_DIR = None if args.no_save_vis else os.path.join(OUTPUT_DIR, 'detection_visualizations')
 
     # 读取相机内参
     with open(INTRINSICS_JSON, "r", encoding="utf-8") as f:
@@ -250,7 +273,8 @@ if __name__ == "__main__":
     detector = cv2.aruco.CharucoDetector(board)
 
     R, t, report = hand_eye_calibrate(
-        IMAGES_DIR, ARM_POSE_FILE, board, detector, camera_matrix, dist_coeffs, show_corners=args.show_corners
+        IMAGES_DIR, ARM_POSE_FILE, board, detector, camera_matrix, dist_coeffs, 
+        save_vis_dir=VIS_DIR, show_corners=args.show_corners
     )
 
     if R is not None:

@@ -19,7 +19,9 @@ import numpy as np
 import pyrealsense2 as rs
 
 # ========== 配置 ==========
-IMAGE_SAVE_PATH = "./collect_data_in/"
+#Save: IMAGE_SAVE_PATH = "./collect_data_in/"
+#Verify: IMAGE_SAVE_PATH = "./collect_data_verify/"
+IMAGE_SAVE_PATH = "./collect_data_more/"
 IMG_WIDTH = 1280
 IMG_HEIGHT = 720
 FPS = 30

@@ -20,10 +20,13 @@ logs/model/
 # 注意：assets/own_urdf/（自研手 urdf）不受影响，正常提交
 assets/inspire_urdf/
 
-# 标定采集原始图片（体积大不入库；poses.txt 与标定报告 json/txt 仍正常提交）
-# 覆盖 v1/v2 及后续版本的采集目录与 record_realsense.py 的 rgb/depth 输出
-calibration/**/collect_data_in/*.jpg
-calibration/**/collect_data_in/*.png
+# 标定图片一律不入库（体积大；poses.txt 与标定报告 json/txt 仍正常提交）
+# 覆盖 calibration 下所有采集/复测目录（collect_data_*、rgb/、depth/ 等）及散图
+# 例外：v2/ChArUco.jpeg 为标定板实物参考照（README 引用），正常提交
+calibration/**/*.jpg
+calibration/**/*.jpeg
+calibration/**/*.png
+!calibration/v2/ChArUco.jpeg
 calibration/**/rgb/
 calibration/**/depth/
 
