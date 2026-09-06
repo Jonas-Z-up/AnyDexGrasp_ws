@@ -8,25 +8,41 @@ Z1 + D435i eye-in-hand 数据采集脚本（手动输入位姿版本）
 - 按 S 键 → 粘贴位姿 → 自动保存图片 + poses.txt
 - 按 Q 键退出
 
+用法 (在 tools/ 下运行):
+  python data_collect_manual.py                       # 存到 ../sessions/<今日日期>_collect/
+  python data_collect_manual.py --out ../sessions/20260907_verify
+                                                       # 指定会话目录
+
 Z1 位姿格式: [roll, pitch, yaw, x, y, z]        ← 你输入/发送的格式
-标定保存格式:  [x, y, z, rx, ry, rz]             ← hand_in_eye_calibrate_by_aq.py 期望的格式
+标定保存格式:  [x, y, z, rx, ry, rz]             ← hand_in_eye_ChArUco.py 期望的格式
 两者旋转约定相同 (Rz@Ry@Rx)，仅数组重排即可。
 """
 
 import os
+import time
+import argparse
 import cv2
 import numpy as np
 import pyrealsense2 as rs
 
 # ========== 配置 ==========
-#Save: IMAGE_SAVE_PATH = "./collect_data_in/"
-#Verify: IMAGE_SAVE_PATH = "./collect_data_verify/"
-IMAGE_SAVE_PATH = "./collect_data_more/"
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 IMG_WIDTH = 1280
 IMG_HEIGHT = 720
 FPS = 30
 
 count = 0
+
+# ========== 会话目录 ==========
+parser = argparse.ArgumentParser(description="Z1+D435i 标定数据采集 (手动位姿)")
+parser.add_argument("--out", default=None,
+                    help="保存目录 (默认 ../sessions/<今日日期>_collect/)")
+args = parser.parse_args()
+if args.out:
+    IMAGE_SAVE_PATH = args.out if args.out.endswith('/') else args.out + '/'
+else:
+    IMAGE_SAVE_PATH = os.path.join(SCRIPT_DIR, '..', 'sessions',
+                                   time.strftime('%Y%m%d') + '_collect') + '/'
 
 # ========== 初始化相机 ==========
 pipeline = rs.pipeline()

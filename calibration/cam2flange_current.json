@@ -1,15 +1,35 @@
 {
   "R_cam2flange": [
-    [-0.01445842, -0.00174211, 0.99989395],
-    [-0.99948934, 0.02852402, -0.01440287],
-    [-0.02849590, -0.99959159, -0.00215363]
+    [
+      0.011099841618263273,
+      -0.015599315514212952,
+      0.999816710638274
+    ],
+    [
+      -0.9995509745692253,
+      0.027657638776601434,
+      0.01152841077580663
+    ],
+    [
+      -0.027832404742712813,
+      -0.9994957310428052,
+      -0.015285315614889328
+    ]
   ],
-  "t_cam2flange": [-0.06298312, 0.02978307, 0.07444054],
-  "method": "HORAUD",
-  "position_rms_m": 0.007706,
-  "rotation_rms_deg": 0.8254,
+  "t_cam2flange": [
+    -0.009420858365157287,
+    0.03177449392710804,
+    0.0724028440485301
+  ],
+  "method": "DANIILIDIS",
+  "position_rms_m": 0.002459221304596046,
+  "rotation_rms_deg": 0.17545384644595968,
   "setup": "eye-in-hand",
   "camera": "RealSense D435i",
   "robot": "Unitree Z1",
-  "note": "Z1 眼在手上手眼标定结果。相机安装在 Z1 末端，cam2flange 将相机坐标系下的抓取位姿变换到 Z1 法兰坐标系。"
+  "date": "2026-09-06",
+  "board": "calib.io ChArUco 9x9/50mm/37mm/DICT_4X4_50, 31\u7ec4\u6fc0\u52b1\u4f4d\u59ff",
+  "intrinsics": "config/realsense_intrinsics.json (61\u56fe\u8054\u5408\u81ea\u6807\u5b9a, \u542b\u5f84\u5411\u7578\u53d8)",
+  "cross_check": "\u4e0e21\u7ec4\u72ec\u7acb\u89e3\u5dee 3.13mm / 0.058deg (v2/cross_check_selfcal/)",
+  "note": "Z1 \u773c\u5728\u624b\u4e0a\u624b\u773c\u6807\u5b9a\u3002\u65e7 HORAUD \u7ed3\u679c\u5b58\u6863\u4e8e measured_results/cam2flange_horaud_archive.json; grasp_config.json offset_xyz \u5fc5\u987b\u5f52\u96f6\u91cd\u6d4b\u3002"
 }

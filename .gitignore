@@ -17,8 +17,12 @@ dist/
 logs/model/
 
 # 静态大资源：Inspire 手 mesh/点云（9.7G，来自上游 AnyDexGrasp 仓库，不入库）
-# 注意：assets/own_urdf/（自研手 urdf）不受影响，正常提交
 assets/inspire_urdf/
+
+# 静态大资源：自研手 URDF（SolidWorks 导出的 STL mesh + urdf，体积大，不入库）
+# 仅保留 .gitkeep 占位；文件改动需线下同步
+assets/own_urdf/*
+!assets/own_urdf/.gitkeep
 
 # 标定图片一律不入库（体积大；poses.txt 与标定报告 json/txt 仍正常提交）
 # 覆盖 calibration 下所有采集/复测目录（collect_data_*、rgb/、depth/ 等）及散图

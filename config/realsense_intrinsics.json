@@ -1,8 +1,19 @@
 {
   "width": 1280,
   "height": 720,
-  "ppx": 648.2249755859375,
-  "ppy": 362.6166687011719,
-  "fx": 905.9029541015625,
-  "fy": 905.0654907226562
+  "fx": 898.5918535937953,
+  "fy": 897.6643957890357,
+  "ppx": 649.7991413428902,
+  "ppy": 361.39567590909076,
+  "distortion_coefficients": [
+    0.160634833975477,
+    -0.49596953341228894,
+    0.0,
+    0.0,
+    0.4448964048593123
+  ],
+  "distortion_model": "plumb_bob (k1, k2, p1, p2, k3)",
+  "source": "61\u5f20ChArUco\u91c7\u96c6\u56fe\u8054\u5408\u81ea\u6807\u5b9a (cv2.calibrateCamera, \u521d\u503c=\u51fa\u5382\u5185\u53c2), 2026-09-06",
+  "reprojection_rms_px": 0.2695102860099811,
+  "factory_backup": "realsense_intrinsics_factory_backup.json"
 }

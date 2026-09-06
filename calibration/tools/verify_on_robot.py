@@ -26,6 +26,7 @@ Z1 + D435i 手眼标定 真机在线验证脚本 (ChArUco / OpenCV 4.10)
 """
 
 import os
+import sys
 import json
 import argparse
 
@@ -33,6 +34,8 @@ import cv2
 import numpy as np
 import pyrealsense2 as rs
 
+# z1_pose_client.py 在上一级 calibration/ 目录, 与 Move_Key.py 同目录
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 from z1_pose_client import PoseClient
 
 np.set_printoptions(precision=4, suppress=True)
@@ -58,8 +61,8 @@ def posture_to_T_base_flange(posture):
 
 def main():
     parser = argparse.ArgumentParser(description="Z1 手眼标定真机在线验证 (ChArUco)")
-    parser.add_argument("--result-json", default=None,
-                        help="标定结果 JSON (默认 measured_data_in/calibration_report.json)")
+    parser.add_argument("--result-json", default="../sessions/20260906_crosscheck/solve_more/calibration_report.json",
+                        help="标定结果 JSON (默认为当前采用的解: 2026-09-06 自标定内参 31 组)")
     parser.add_argument("--intrinsics-json", default=None)
     parser.add_argument("--squares-x", type=int, default=9)
     parser.add_argument("--squares-y", type=int, default=9)
@@ -69,7 +72,9 @@ def main():
     args = parser.parse_args()
 
     # ── 标定结果 ──
-    result_json = args.result_json or os.path.join(SCRIPT_DIR, 'measured_data_in', 'calibration_report.json')
+    result_json = args.result_json
+    if not os.path.isabs(result_json):
+        result_json = os.path.join(SCRIPT_DIR, result_json)
     with open(result_json, "r", encoding="utf-8") as f:
         report = json.load(f)
     R_X = np.array(report["selected"]["rotation"], dtype=float)

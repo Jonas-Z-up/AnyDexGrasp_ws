@@ -28,8 +28,8 @@ conda activate anydex && cd scripts && python run_inspire_preview.py --visualize
 ## 目录
 - `scripts/` — 入口脚本。`anydex_eih_grasp.py` 是主编排器（演示循环），`anydex_eih_grasp_calib.py` 是标定版（`--calib-jog`），`MoveZ1.py` 是 Z1 驱动子进程
 - `anydex_core/` — 不改动的算法库 (models, pointnet2, knn, utils, dataset)
-- `calibration/` — `cam2flange_current.json` (当前眼在手上标定) + 标定程序（`Move_Key.py` 点动控制器、`hand_in/` 采集/求解/离线验证，自 `Robotic_Hand/HandEyeCalibrate` 迁入；重标流程见 `calibration/README.md`）
-- `assets/` — 静态大资源：`inspire_urdf/`（Inspire 手 mesh/点云/宽度查表，来自上游仓库，git 忽略）、`own_urdf/`（自研手 urdf，入库）
+- `calibration/` — `cam2flange_current.json` (当前眼在手上标定) + 标定程序（`Move_Key.py` 点动控制器、`tools/` 采集/求解/离线复测/真机验证，`sessions/` 历史会话数据，`archive/` v1 棋盘格旧方案存档；重标流程见 `calibration/README.md`）
+- `assets/` — 静态大资源，均 git 忽略（仅占位 `.gitkeep` 入库）：`inspire_urdf/`（Inspire 手 mesh/点云/宽度查表，来自上游仓库）、`own_urdf/`（自研手 SolidWorks 导出 URDF/STL，需线下同步）
 - `hand_control/` — 自研手串口控制
 - `logs/` — 模型权重 + 推理输出
 
@@ -55,8 +55,8 @@ conda activate anydex && cd scripts && python run_inspire_preview.py --visualize
 - ✅ 已知系统偏移（2026-09-04 更新）：分两层，**层1 已根修**。
   - **层1 = `hasGripper` 配错导致 38.2mm 帧偏移（已修）**：**不是 FK 虚报**。末端装的是 D435i + 自研手、**没有 Unitree 夹爪**，但 `Move_Key.py`/`MoveZ1.py` 用 `ArmInterface(hasGripper=True)` 连接，SDK 会把 FK 末端帧（index=6）从法兰安装面前移 **38.2mm** 当作"夹爪 TCP"（SDK 实测 q=0：False→`[0.049,0,0.1605]`，True→`[0.0872,0,0.1605]`）。真机 `verify_z1_pose.py` 的 scan 数据把误差投影到法兰 +X：pitch=0/0.4/0.8 → **38.20/38.24/38.47 mm**，完全吻合（原记"39.4±1.0mm 沿接近轴"即此）。→ 两处已改 `hasGripper=False`，读回帧 == 命令帧；`Move_Key.py` 启动新增 `check_frame_consistency()` 自检（3mm/1°，配错即报错）。**`getpose`/`P` 键位姿现在可直接用于标定**。代价：因标定时存的是 TCP 帧位姿，旧外参里混入了这 3.82cm，必须重标。
   - **层2 = 手眼外参错误（待重标）**：`t_cam2flange` 把相机位置算错 **~11cm 沿法兰+X / ~3cm 高**。扣除层1 的 3.82cm 后**仍剩 ~7.5cm 属外参本身**，只能靠重标消除。点云与网络已验证正确（网络两指抓点深度 0.383 ≈ 物理尺量 0.38m）；6 次 jog 反推相机实际位置≈基座 [0.414, 0.03, 0.356]。当前 `offset_xyz=[0.072, 0, -0.085]` 是**两层合计**的总账补偿（外参根修后必须归零重测）。
-  - ⬜ 外参根修（重标定，v2 管线在 `calibration/v2/`）。**重标前必做三项**：①尺量 ChArUco 方格/ArUco 码实际边长（默认 35/26mm 未验证；用单图 PnP 的 `|t|` 对尺量距离自检——ChArUco 有绝对尺度，这是它优于普通棋盘格之处）；②补 `config/realsense_intrinsics.json` 的 `distortion_coefficients`（现为全零，D435i 实际有畸变）；③姿态激励要足（旧序列 pitch 全程仅变 2.3°，纯平移对 R 零贡献 ⇒ R 不可观）。另注意：一致性 RMS 是相对指标，对上述系统性偏差**不敏感**（旧结果 7.7mm 看着健康，外参却错了 11cm），必须有尺量等绝对基准
-- ⬜ 真机细调闭环（平移已收敛）：`offset_xyz=[0.072, 0, -0.085]` 后抓取已精确；剩余=手眼外参根修（见"已知系统偏移"层2）+ `offset_rpy_deg` 朝向残余的数据积累验证
+  - ✅ **外参根修完成（2026-09-06）**：ChArUco（calib.io 9x9/50mm/37mm/DICT_4X4_50）重标，新解 t_cam2flange=[-9.4, 31.8, 72.4]mm，写入 `cam2flange_current.json`。证据链：两组独立数据（21+31 组，板位不同）交叉求解差 3.13mm/0.058°；检出 RGB 径向畸变并更新内参（零畸变重投影 0.996px → 含畸变 0.270px，畸变曾是 8mm 光轴歧义主因）。旧 HORAUD 结果存档 `calibration/measured_results/cam2flange_horaud_archive.json`。**遗留**：①新板 50/37mm 边长尚未尺量确认（默认值=标称值）；②绝对精度尚未尺量仲裁（复测算得新板位置 [0.819, 0.236, -0.011]m 可对照）；③`offset_xyz=[0.072,0,-0.085]` 是对旧外参的总账补偿，**必须归零重测**
+- ⬜ 真机细调闭环（平移已收敛）：`offset_xyz=[0.072, 0, -0.085]` 后抓取已精确；外参已根修（见"已知系统偏移"层2），下一步=offset 归零重测新基线 + `offset_rpy_deg` 朝向残余的数据积累验证
 - ⬜ 自研手阶段二：需采集试错数据 + 训练专属决策模型
 - ⬜ 自研手 URDF/Mesh 用于碰撞检测
 

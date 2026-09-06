@@ -227,7 +227,8 @@ def hand_eye_calibrate(images_path, arm_pose_file, board, detector, camera_matri
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Z1 眼在手上手眼标定 (ChArUco - OpenCV 4.10)")
-    parser.add_argument("--data-dir", default=None)
+    parser.add_argument("--data-dir", default="../sessions/20260905_calib_21",
+                        help="采集数据目录 (含 *.jpg 与 poses.txt)，默认为标定基准会话")
     # ChArUco 标定板参数
     parser.add_argument("--squares-x", type=int, default=9, help="横向方格数")
     parser.add_argument("--squares-y", type=int, default=9, help="纵向方格数")
@@ -235,6 +236,8 @@ def parse_args():
     parser.add_argument("--marker-size", type=float, default=0.037, help="ArUco 码物理边长 (米)")
     parser.add_argument("--aruco-dict", type=str, default="DICT_4X4_50", help="ArUco 字典类型")
     parser.add_argument("--intrinsics-json", default=None)
+    parser.add_argument("--output-dir", default=None,
+                        help="结果输出目录 (默认 <data-dir>/solve，解算结果跟随会话存放)")
     parser.add_argument("--show-corners", action="store_true", help="是否实时弹窗显示检测界面")
     parser.add_argument("--no-save-vis", action="store_true", help="是否禁用保存检测可视化图片")
     parser.add_argument("--max-position-rms", type=float, default=0.005)
@@ -245,13 +248,15 @@ if __name__ == "__main__":
     args = parse_args()
     current_dir = os.path.dirname(os.path.abspath(__file__))
 
-    IMAGES_DIR = args.data_dir if args.data_dir else "collect_data_in"
+    IMAGES_DIR = args.data_dir
     if not os.path.isabs(IMAGES_DIR):
         IMAGES_DIR = os.path.join(current_dir, IMAGES_DIR)
 
     ARM_POSE_FILE = os.path.join(IMAGES_DIR, 'poses.txt')
     INTRINSICS_JSON = args.intrinsics_json or "/home/jonas/Projects/AnyDexGrasp_ws/config/realsense_intrinsics.json"
-    OUTPUT_DIR = os.path.join(current_dir, 'measured_data_in')
+    OUTPUT_DIR = args.output_dir if args.output_dir else os.path.join(IMAGES_DIR, 'solve')
+    if not os.path.isabs(OUTPUT_DIR):
+        OUTPUT_DIR = os.path.join(current_dir, OUTPUT_DIR)
 
     # 可视化图片保存目录
     VIS_DIR = None if args.no_save_vis else os.path.join(OUTPUT_DIR, 'detection_visualizations')

@@ -12,12 +12,11 @@ Z1 + RealSense D435i 眼在手上 (Eye-in-Hand) 标定精度离线复测脚本 (
 
 用法:
   1. 保持标定板不动 (换了位置也不影响本脚本, 但采集期间必须静止), 用
-     data_collect_manual.py 往一个新目录采 8-10 组新位姿数据, 例如:
-       cd calibration/v2 && python data_collect_manual.py
-       (把脚本内 IMAGE_SAVE_PATH 改为 ./collect_data_verify/ 或采完直接移动目录)
-  2. 运行:
-       python verify_calibration_v2.py --data-dir collect_data_verify
-     结果从 measured_data_in/calibration_report.json 读取 (DANIILIDIS 最优解)。
+     data_collect_manual.py 采 8-10 组新位姿数据到 sessions/ 下新目录, 例如:
+       cd calibration/tools && python data_collect_manual.py --out ../sessions/20260907_verify
+  2. 运行 (默认读当前采用的解 + 最近一次复测会话):
+       cd calibration/tools && python verify_offline.py
+     也可显式指定: --data-dir ../sessions/<会话> --result-json <解json>
 
 运行环境: object_locator (cv2 4.10)
 """
@@ -127,9 +126,9 @@ def rotation_error_deg(rotation_a, rotation_b):
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Z1 眼在手上标定精度离线复测 (ChArUco - OpenCV 4.10)")
-    parser.add_argument("--data-dir", default="collect_data_verify", help="新采集数据目录 (含 *.jpg 与 poses.txt)")
-    parser.add_argument("--result-json", default=None,
-                        help="标定结果 JSON (默认 measured_data_in/calibration_report.json)")
+    parser.add_argument("--data-dir", default="../sessions/20260906_verify_31", help="新采集数据目录 (含 *.jpg 与 poses.txt)")
+    parser.add_argument("--result-json", default="../sessions/20260906_crosscheck/solve_more/calibration_report.json",
+                        help="标定结果 JSON (默认为当前采用的解: 2026-09-06 自标定内参 31 组)")
     parser.add_argument("--intrinsics-json", default=None)
     # ChArUco 标定板参数 (与 hand_in_eye_ChArUco.py 默认值保持一致)
     parser.add_argument("--squares-x", type=int, default=9, help="横向方格数")
