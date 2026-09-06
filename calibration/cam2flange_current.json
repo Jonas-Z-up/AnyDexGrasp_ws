@@ -30,6 +30,6 @@
   "date": "2026-09-06",
   "board": "calib.io ChArUco 9x9/50mm/37mm/DICT_4X4_50, 31\u7ec4\u6fc0\u52b1\u4f4d\u59ff",
   "intrinsics": "config/realsense_intrinsics.json (61\u56fe\u8054\u5408\u81ea\u6807\u5b9a, \u542b\u5f84\u5411\u7578\u53d8)",
-  "cross_check": "\u4e0e21\u7ec4\u72ec\u7acb\u89e3\u5dee 3.13mm / 0.058deg (v2/cross_check_selfcal/)",
+  "cross_check": "\u4e0e21\u7ec4\u72ec\u7acb\u89e3\u5dee 3.13mm / 0.058deg (v2 sessions/20260906_crosscheck/)",
   "note": "Z1 \u773c\u5728\u624b\u4e0a\u624b\u773c\u6807\u5b9a\u3002\u65e7 HORAUD \u7ed3\u679c\u5b58\u6863\u4e8e measured_results/cam2flange_horaud_archive.json; grasp_config.json offset_xyz \u5fc5\u987b\u5f52\u96f6\u91cd\u6d4b\u3002"
 }

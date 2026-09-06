@@ -12,7 +12,7 @@ calibration/
 ├── cam2flange_current.json           ★ 现行手眼外参（抓取管线消费点）
 ├── cam2base_current.json             旧方案遗留，仍被 scripts/legacy 引用
 ├── tools/                            现行标定脚本（采集/求解/复测/真机验证/test_poses）
-├── board/ChArUco.jpeg                标定板实物参考照
+├── ChArUco.jpeg                      标定板实物参考照
 ├── sessions/                         历史会话（采集数据 + 各次解算），只增不改
 ├── measured_results/                 结果归档（旧 HORAUD 存档 + 20260906 报告）
 └── archive/                          弃用存档（v1 棋盘格方案、旧 txt 零件）
@@ -55,7 +55,7 @@ p_base = R_flange2base @ p_flange + t_flange2base
 | 日期 | 方案 | 结果 |
 |------|------|------|
 | 2026-09-05 | v2 ChArUco（9x9 / 50mm / 37mm / DICT_4X4_50），21 组 | DANIILIDIS 选优：位置 RMS 2.99mm / 旋转 RMS 0.394°（自洽）；离线复测 10 组（剔 1 组角点不足导致的离群）位置 RMS 3.11mm，板位置复现差 0.7mm。报告见 `sessions/20260905_calib_21/solve/calibration_report.json`（当时仍用零畸变内参） |
-| 2026-09-06 | 内参修正 + 外参更新 | 61 张采集图联合自标定检出 RGB 径向畸变（零畸变假设重投影 0.996px → 含畸变 0.270px；两组独立求解差从 8.25mm/0.418° 收窄到 3.13mm/0.058°）。内参更新为自标定 K+畸变（出厂值存档 `config/realsense_intrinsics_factory_backup.json`），外参采用 31 组重解（`sessions/20260906_crosscheck/solve_more`，DANIILIDIS，2.46mm/0.175°），写入 `cam2flange_current.json`，报告归档 `measured_results/calibration_report_20260906_charuco.json` |
+| 2026-09-06 | 内参修正 + 外参更新 | 61 张采集图联合自标定检出 RGB 径向畸变（零畸变假设重投影 0.996px → 含畸变 0.270px；两组独立求解差从 8.25mm/0.418° 收窄到 3.13mm/0.058°）。内参更新为自标定 K+畸变（出厂值存档 `config/realsense_intrinsics_factory_backup.json`），外参采用 31 组重解（`sessions/20260906_crosscheck/solve_more`，DANIILIDIS，2.46mm/0.175°），写入 `cam2flange_current.json`，报告归档 `measured_results/calibration_charuco_current.json` |
 
 ---
 
@@ -79,7 +79,7 @@ p_base = R_flange2base @ p_flange + t_flange2base
 - `Move_Key.py` 通过绝对路径加载 Z1 SDK（`~/Projects/unitree_z1/.../z1_sdk/lib`），不受本目录位置影响
 - `tools/` 内脚本均用相对本脚本的路径：采集数据落在 `sessions/<会话>/`，求解输出跟随数据落在 `sessions/<会话>/solve/`，**采集、求解、复测都必须在 `tools` 目录下运行**
 - 内参默认取 `../config/realsense_intrinsics.json`（与抓取管线共用，2026-09-06 起为 61 图联合自标定 K+径向畸变；出厂值备份在 `realsense_intrinsics_factory_backup.json`）。⚠️ 内参与外参配套：若再更换内参，所有手眼外参必须用新内参重算
-- 标定板：calib.io ChArUco，9x9 方格 / 方格 50mm / marker 37mm / DICT_4X4_50，marker 印在全部白格共 40 个（ID 0-39）。板参数已写入 `v2` 两个脚本的默认值，已与实物（`board/ChArUco.jpeg`）做过生成比对 + 检测验证（40 marker / 64 角点全部识别）
+- 标定板：calib.io ChArUco，9x9 方格 / 方格 50mm / marker 37mm / DICT_4X4_50，marker 印在全部白格共 40 个（ID 0-39）。板参数已写入 `v2` 两个脚本的默认值，已与实物（`ChArUco.jpeg`）做过生成比对 + 检测验证（40 marker / 64 角点全部识别）
 
 ---
 
