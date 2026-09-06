@@ -34,6 +34,9 @@ calibration/**/*.png
 calibration/**/rgb/
 calibration/**/depth/
 
+# urdf 0-2000 模型图
+docs/**/*.png
+
 # 编辑器
 .idea/
 .vscode/

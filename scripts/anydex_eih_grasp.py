@@ -72,15 +72,16 @@ X_RANGE = (-0.05, 0.65)
 Y_RANGE = (-0.50, 0.50)
 Z_RANGE = (0.12, 0.70)
 
-# 手安装/朝向参数 —— 必须与 config/grasp_config.json 一致
-# (run_inspire_preview.py 预览仍读 config; 两处改一处必须同步改另一处)
-HAND_MOUNT_Z = 0.09             # 法兰→掌心沿接近轴 (m)
-HAND_FINGERTIP_Z = 0.24         # 法兰→指尖 (m), 参考值, demo 未直接使用
-MOUNT_YAW_DEG = -90.0           # 拇指/掌心绕接近轴方位角 α
-ORIENT_DEV_THRESH_DEG = 90.0    # 网络朝向 vs 固定朝向偏差阈值, 超则回退
-OFFSET_XYZ = [0.085, 0.01, -0.065]       # 基座系抓取位置偏移 (m) —— 与 config 一致
-OFFSET_RPY_DEG = [0.0, 15.0, 0.0]       # 基座系绕掌心旋转偏移 (度) —— 与 config 一致
-Z_COMP_KNOTS = [[0.20625, 0.005], [0.258398, -0.02]]  # 基座系 z 高度补偿锚点 [命令z, 补偿量] (m) —— 与 config 一致
+# 手安装/朝向参数 —— 统一从 config/grasp_config.json 读取（与标定脚本/预览同源）。
+# 旧版此处为硬编码常量，会与 config 漂移导致"标定结果不迁移到演示循环"，已废除。
+_hand_cfg = grasp_common.load_hand_config()
+HAND_MOUNT_Z = _hand_cfg["hand_mount_z"]                          # 法兰→掌心沿接近轴 (m)
+HAND_FINGERTIP_Z = _hand_cfg["hand_fingertip_z"]                  # 法兰→指尖 (m), 参考值
+MOUNT_YAW_DEG = _hand_cfg["mount_yaw_deg"]                        # 拇指/掌心绕接近轴方位角 α
+ORIENT_DEV_THRESH_DEG = _hand_cfg["orient_deviation_thresh_deg"]  # 网络朝向偏差阈值, 超则回退
+OFFSET_XYZ = grasp_common.load_offset_xyz()                       # 基座系抓取位置偏移 (m)
+OFFSET_RPY_DEG = grasp_common.load_offset_rpy_deg()               # 基座系绕掌心旋转偏移 (度)
+Z_COMP_KNOTS = grasp_common.load_z_comp_knots()                   # z 高度补偿锚点 [命令z, 补偿量] (m)
 
 
 # ── Z1 Server 客户端 ─────────────────────────────────────
