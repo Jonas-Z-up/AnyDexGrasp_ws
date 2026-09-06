@@ -119,7 +119,7 @@ python analyze_jog_history.py
 - 按键：`w/s/a/d/q/e` = 基座系前后/左右/上下微调（初始步长 5mm）；`r/f` = 俯仰 ±（绕法兰中心，默认 1°，`--jog-pitch-step-deg` 可调）；`+`/`-` = 切平移步长（2/5/10 mm）；`空格` = 记录并继续抓取；`回车` = 有微调会补记、没微调跳过；`Esc`/`Ctrl+C` = 中止（有调整会补记）。
 - 记录保存：`logs/jog_calib_history.jsonl`（可用 `--jog-history <路径>` 覆盖），每行一条 JSON 样本。
 - 分析输出：恒定偏置 → `offset_xyz` 建议；接近轴投影 → `hand_mount_z` 建议；朝向残余 → `offset_rpy_deg` 建议（pitch 为主，绕掌心中心，与 r/f 绕法兰中心不同，小角度近似）；offset 对物体深度线性拟合 → 斜率显著即指向手眼标定旋转误差（需重标定）。
-- ✅ 已知系统偏移（2026-09-04 更新）：①`getpose`(FK) 与命令位姿差 **38.2mm 沿法兰 +X**——**不是 FK 虚报**，根因是 `ArmInterface(hasGripper=True)`：末端装的是相机+自研手、没有 Unitree 夹爪，该参数让 SDK 把 FK 末端帧前移 38.2mm 当"夹爪 TCP"。`Move_Key.py`/`MoveZ1.py` 已改 `hasGripper=False`（读回帧 == 命令帧），`Move_Key.py` 启动新增 `check_frame_consistency()` 自检拦截复发。②残余 `offset_xyz=[0.072,0,-0.085]` 是**外参错误 + 上述帧偏移的合计补偿**：外参把相机位置算错 ~11cm 沿法兰+X，减去帧偏移 3.82cm 后仍剩 ~7.5cm 属外参本身，需重标定消除。定位工具：`python tools/verify_z1_pose.py`（结果在 `logs/pose_verify_history.jsonl`）。
+- ✅ 已知系统偏移（2026-09-06 更新）：①`getpose`(FK) 与命令位姿差 **38.2mm 沿法兰 +X**——**不是 FK 虚报**，根因是 `ArmInterface(hasGripper=True)`：末端装的是相机+自研手、没有 Unitree 夹爪，该参数让 SDK 把 FK 末端帧前移 38.2mm 当"夹爪 TCP"。`Move_Key.py`/`MoveZ1.py` 已改 `hasGripper=False`（读回帧 == 命令帧），`Move_Key.py` 启动新增 `check_frame_consistency()` 自检拦截复发。②~~外参错误~~ **已于 2026-09-06 根修**：ChArUco 重标 + 自标定内参（详见 `calibration/README.md` 标定历史），新外参 t_cam2flange=[-9.4, 31.8, 72.4]mm。③遗留：`offset_xyz`（当前 [0.085, 0.01, -0.065]）仍是旧外参时代的补偿值，须归零后用 jog 标定重测新外参基线。定位工具：`python tools/verify_z1_pose.py`（结果在 `logs/pose_verify_history.jsonl`）。
 
 ## 训练
 ```bash

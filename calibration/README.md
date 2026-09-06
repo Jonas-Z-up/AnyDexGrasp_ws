@@ -183,6 +183,6 @@ python verify_on_robot.py --show-window
 ### 8. 上机验证 + offset 归零重测 ⚠️
 
 - 上机验证可用 `scripts/tools/validate_grasp_setup.py --params/--target/--move` 分步检查
-- **`config/grasp_config.json` 的 `offset_xyz=[0.072, 0, -0.085]` 是对旧外参 ~11cm 误差的总账补偿；外参根修后必须归零重测**，否则双重补偿。按 CLAUDE.md「抓取偏差标定」流程重新 jog 标定得出新 offset
+- **`config/grasp_config.json` 的 `offset_xyz`（当前 [0.085, 0.01, -0.065]，2026-08-10 设定）是对旧外参 ~11cm 误差的总账补偿；外参已于 2026-09-06 根修，必须归零重测**，否则双重补偿。按 CLAUDE.md「抓取偏差标定」流程重新 jog 标定得出新 offset
 
 ---
