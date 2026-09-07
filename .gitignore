@@ -43,3 +43,4 @@ docs/**/*.png
 
 # 日志/运行产物
 *.log
+/logs/preview/latest_inspire_grasp.json

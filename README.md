@@ -31,6 +31,7 @@ AnyDexGrasp_ws/
 ### 1. 启动 Z1 机械臂控制器（终端0）
 ```bash
 ping 192.168.123.110
+
 cd /home/jonas/Projects/unitree_z1/Unitree-Z1_SDK/z1_controller/build
 ./z1_ctrl
 ```
@@ -51,6 +52,8 @@ python realsense.py
 conda activate anydex
 cd ~/Projects/AnyDexGrasp_ws/scripts
 python anydex_eih_grasp.py
+
+python anydex_eih_grasp_calib.py
 # 演示循环: 每轮拍照后回车自动执行抓取, 松手后自动回观测位姿循环; 仅 Ctrl+C 回零下电退出
 # --no-hand: 无手桥, 手部步骤用固定等待(HAND_WAIT_S)模拟
 # 偏移微调版: python anydex_eih_grasp_calib.py --calib-jog  ← 见下方"抓取偏差标定"
