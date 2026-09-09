@@ -41,7 +41,7 @@ Z1_URDF = ("/home/jonas/Projects/unitree_z1/Unitree-Z1_SDK/z1_moveit_ws/"
 Z1_MESH_ROOT = ("/home/jonas/Projects/unitree_z1/Unitree-Z1_SDK/z1_ws/"
                 "src/unitree_ros/robots/z1_description")
 CAM_JSON = os.path.join(WS_ROOT, "calibration", "cam2flange_current.json")
-OUT_DIR = os.path.join(WS_ROOT, "docs", "arm_renders")
+OUT_DIR = os.path.join(WS_ROOT, "own_hand", "renders", "arm")
 DEFAULT_RPYXYZ = "0,1.057,0,0.3,0,0.35"   # 演示循环的观测位姿
 
 

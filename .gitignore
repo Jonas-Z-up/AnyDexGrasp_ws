@@ -37,6 +37,13 @@ calibration/**/depth/
 # urdf 0-2000 模型图
 docs/**/*.png
 
+# 自研手工作区：渲染 PNG 可再生不入库（问题记录 markdown 正常提交）
+own_hand/renders/
+own_hand/**/*.png
+
+# ZCode 会话临时文件
+.zcode/
+
 # 编辑器
 .idea/
 .vscode/

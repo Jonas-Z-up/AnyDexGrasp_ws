@@ -34,6 +34,25 @@ DEFAULT_DEV_THRESH_DEG = 90.0      # 网络朝向与固定朝向夹角阈值，�
 DEFAULT_OFFSET_RPY_DEG = [0.0, 0.0, 0.0]  # 基座系绕掌心旋转调试偏移（度）
 DEFAULT_Z_COMP_KNOTS = []  # 基座系 z 高度补偿锚点 [[z, comp_z]…]（米）；空 = 不补偿
 
+# ── 自研手 (hand_model=own) 安装参数默认值 ─────────────────────────
+# 语义: JSON 顶层 translation/rotation_matrix = 自研手 base_link 位姿
+# (own_hand_grasp.py 锚定), 非 Inspire 掌心位姿。
+# hand_mount_z_own: 法兰→自研手 base 沿法兰X(=手指方向)的物理安装距离 (m)。
+#   初值 0.05: 由新旧链路法兰重合推导中类型 2/3/4 独立收敛于 49-52mm
+#   (scripts/tools/derive_hand_mount_z_own.py, 2026-09-07) —— 物理常数不应逐类型
+#   变化, 残差由 jog 标定闭环吸收; 建议真机尺量法兰面→手 base 原点核实。
+# mount_yaw_deg_own: 自研手 base 帧 ≈ 法兰帧 (2026-09-07 装配定案: 实机手 =
+#   旧掌心帧装配绕接近轴转 +90°, 而旧掌心帧 = 法兰@Rx(-90) ⇒ base = 法兰, 滚转 0)。
+#   最初误推为 -180 (链式相加错误), 由 B4 闭合测试的偏差闸门失败定位并修正。
+DEFAULT_HAND_MOUNT_Z_OWN = 0.05
+DEFAULT_HAND_FINGERTIP_Z_OWN = 0.22
+DEFAULT_MOUNT_YAW_DEG_OWN = 0.0
+# own 模式朝向闸门默认关闭(180°): own 锚定的朝向与位置同源同可信, 且自研手的
+# 法兰X=手指方向(相对接近轴倾斜~50°, 与 Inspire 一致)+逐类型拇指方位, 与固定
+# 朝向的【全姿态】偏差常超 90°(滚转分量为主), 旧闸门会错误回退固定朝向、破坏
+# 锚定语义。不可达朝向的安全兜底由执行器 IK 级固定朝向候选承担(本来就有)。
+DEFAULT_DEV_THRESH_DEG_OWN = 180.0
+
 # ── 与执行器共用的抓取常量 ────────────────────────────────────────
 FIXED_RPY = (0.0, 0.665, 0.0)     # 固定抓取朝向（兜底）
 OBSERVE_RPYXYZ = (0.0, 1.057, 0.0, 0.3, 0.0, 0.35)  # 拍照/推理位姿
@@ -45,15 +64,34 @@ def default_config_path():
         "config", "grasp_config.json")
 
 
-def load_hand_config(path=None):
-    """从 config/grasp_config.json 读取手安装参数，缺省回退默认值。"""
+def load_hand_config(path=None, model=None):
+    """从 config/grasp_config.json 读取手安装参数，缺省回退默认值。
+
+    hand_model 维度: config 的 "hand_model" ("inspire"|"own", 缺省 inspire)
+    决定用哪组参数; model 参数可显式覆盖 config（预览 --hand-model 用）。
+    own 组: hand_mount_z_own / mount_yaw_deg_own / hand_fingertip_z_own。
+    返回 dict 额外含 "hand_model" 键（旧调用方只读 4 个原键名, 向后兼容,
+    jog 历史 hand_cfg 会随之多一个键, 无碍）。
+    """
     cfg = {}
     if path is None:
         path = default_config_path()
     if os.path.exists(path):
         with open(path) as f:
             cfg = json.load(f)
+    if model is None:
+        model = str(cfg.get("hand_model", "inspire")).lower()
+    if model == "own":
+        return {
+            "hand_model": "own",
+            "hand_mount_z": float(cfg.get("hand_mount_z_own", DEFAULT_HAND_MOUNT_Z_OWN)),
+            "hand_fingertip_z": float(cfg.get("hand_fingertip_z_own", DEFAULT_HAND_FINGERTIP_Z_OWN)),
+            "mount_yaw_deg": float(cfg.get("mount_yaw_deg_own", DEFAULT_MOUNT_YAW_DEG_OWN)),
+            "orient_deviation_thresh_deg": float(cfg.get(
+                "orient_deviation_thresh_deg_own", DEFAULT_DEV_THRESH_DEG_OWN)),
+        }
     return {
+        "hand_model": "inspire",
         "hand_mount_z": float(cfg.get("hand_mount_z", DEFAULT_HAND_MOUNT_Z)),
         "hand_fingertip_z": float(cfg.get("hand_fingertip_z", DEFAULT_HAND_FINGERTIP_Z)),
         "mount_yaw_deg": float(cfg.get("mount_yaw_deg", DEFAULT_MOUNT_YAW_DEG)),

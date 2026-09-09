@@ -32,6 +32,13 @@ def parse_args():
     
     parser.add_argument("--collision", action="store_true", default=True)
     parser.add_argument("--random_grasp", action="store_true")
+    parser.add_argument("--hand-model", dest="hand_model", choices=["inspire", "own"],
+                        default=None,
+                        help="抓取锚定几何: own=自研手URDF重锚定(推荐), inspire=查表旧行为; "
+                             "缺省读 config/grasp_config.json 的 hand_model")
+    parser.add_argument("--fixed-type", dest="fixed_type", type=int, default=None,
+                        choices=range(1, 9),
+                        help="固定抓取类型 1-8 (A/B 实验排除选型干扰; 深度仍由模型决定)")
     parser.add_argument("--output", default="../logs/preview/latest_inspire_grasp.json")
     parser.add_argument("--intrinsics", default="../config/realsense_intrinsics.json")
     parser.add_argument("--calibration", default="../calibration/cam2flange_current.json",
@@ -140,6 +147,14 @@ def make_grasp_frame(grasp, size=0.08):
     return frame
 
 
+class _PoseShim:
+    """让 make_grasp_frame 接受裸 translation/rotation（own 重锚定后的位姿）。"""
+
+    def __init__(self, translation, rotation_matrix):
+        self.translation = np.asarray(translation, dtype=float)
+        self.rotation_matrix = np.asarray(rotation_matrix, dtype=float)
+
+
 def save_debug_scene(output_json, cloud, hand_mesh, two_finger_geom, frame):
     base_dir = os.path.dirname(output_json)
     os.makedirs(base_dir, exist_ok=True)
@@ -156,6 +171,10 @@ def save_debug_scene(output_json, cloud, hand_mesh, two_finger_geom, frame):
 def main():
     args = parse_args()
     ri = import_robot_inspire(args)
+    hand_model = args.hand_model or gc.load_hand_config().get("hand_model", "inspire")
+    print(f"[手模型] {hand_model}"
+          + ("  (自研手URDF锚定: JSON顶层位姿=自研手base)" if hand_model == "own"
+             else "  (Inspire查表锚定: 旧行为)"))
 
     print("[1/5] loading networks...")
     intrinsics = load_intrinsics(args.intrinsics)
@@ -241,6 +260,10 @@ def main():
             print(f"No Inspire grasp above score_thresh={args.score_thresh}.")
             return 4
 
+        if args.fixed_type is not None:
+            inspire_type = np.full_like(inspire_type, args.fixed_type)
+            print(f"[fixed-type] 抓取类型固定为 {args.fixed_type} (深度仍由模型决定)")
+
         two_fingers_ggarray = GraspGroup(ggarray)
         two_fingers_object_ids = ggarray[:, 16]
         inspire_ggarray = ri.InspireHandRGraspGroup()
@@ -288,10 +311,32 @@ def main():
 
         chosen = inspire_ggarray[0]
         chosen_two_finger = two_fingers_ggarray[0]
+
+        # ── 自研手重锚定 (hand_model=own) ─────────────────────────
+        # 选型/碰撞/深度仍走 Inspire 管线(近似), 只替换"手放哪"的几何:
+        # 顶层 translation/rotation_matrix 语义 = 自研手 base_link 位姿。
+        # 执行器只消费这 4 个键, 其余字段照旧写出。
+        own_anchor = None
+        if hand_model == "own":
+            sys.path.insert(0, os.path.abspath(
+                os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "own_hand")))
+            import own_hand_grasp as ohg
+            t_base, R_base = ohg.base_pose_from_grasp(chosen_two_finger,
+                                                      int(chosen.grasp_type))
+            own_anchor = (t_base, R_base)
+            d_anchor = float(np.linalg.norm(
+                np.asarray(chosen.translation, dtype=float) - t_base))
+            print(f"[own] Type {int(chosen.grasp_type)} 重锚定: "
+                  f"与Inspire掌心位姿差 {d_anchor*1000:.1f}mm "
+                  f"(包络中心对准抓取点, 对向轴对齐开合轴)")
+
+        out_translation = own_anchor[0] if own_anchor else chosen.translation
+        out_rotation = own_anchor[1] if own_anchor else chosen.rotation_matrix
+
         result = {
             "score": float(chosen.score),
-            "translation": to_jsonable(chosen.translation),
-            "rotation_matrix": to_jsonable(chosen.rotation_matrix),
+            "translation": to_jsonable(out_translation),
+            "rotation_matrix": to_jsonable(out_rotation),
             "depth": float(chosen.depth),
             "width": float(chosen.width),
             "angle": to_jsonable(chosen.angle),
@@ -299,6 +344,9 @@ def main():
             "two_finger_score": float(chosen_two_finger.score),
             "two_finger_translation": to_jsonable(chosen_two_finger.translation),
             "two_finger_rotation_matrix": to_jsonable(chosen_two_finger.rotation_matrix),
+            "two_finger_width": float(chosen_two_finger.width),
+            "two_finger_depth": float(chosen_two_finger.depth),
+            "hand_model": hand_model,
             "num_output_grasps": int(len(inspire_ggarray)),
             "elapsed_sec": time.time() - t0,
             "collision_checked": bool(args.collision),
@@ -314,9 +362,15 @@ def main():
 
         if args.visualize or args.save_debug_scene:
             cloud = ensure_cloud(cloud, points_down).voxel_down_sample(max(args.voxel_size, 0.005))
-            hand_mesh = chosen.load_mesh(args.inspire_mesh_json_path, chosen_two_finger)
-            hand_mesh.paint_uniform_color([1.0, 0.1, 0.1])
-            frame = make_grasp_frame(chosen)
+            if hand_model == "own":
+                hand_mesh = ohg.hand_mesh_at_grasp(
+                    chosen_two_finger, int(chosen.grasp_type),
+                    color=[1.0, 0.1, 0.1])
+                frame = make_grasp_frame(_PoseShim(out_translation, out_rotation))
+            else:
+                hand_mesh = chosen.load_mesh(args.inspire_mesh_json_path, chosen_two_finger)
+                hand_mesh.paint_uniform_color([1.0, 0.1, 0.1])
+                frame = make_grasp_frame(chosen)
             world_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.12)
             try:
                 two_finger_geom = chosen_two_finger.to_open3d_geometry()
@@ -331,7 +385,7 @@ def main():
             try:
                 with open(args.calibration) as f:
                     calib = json.load(f)
-                hand_cfg = gc.load_hand_config()
+                hand_cfg = gc.load_hand_config(model=hand_model)
                 R_c2f = np.array(calib["R_cam2flange"], dtype=float)
                 t_c2f = np.array(calib["t_cam2flange"], dtype=float)
                 R_palm = np.asarray(result["rotation_matrix"], dtype=float).reshape(3, 3)

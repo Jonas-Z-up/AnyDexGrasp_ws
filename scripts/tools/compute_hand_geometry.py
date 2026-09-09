@@ -37,7 +37,7 @@ URDF_PATH = os.path.join(WS_ROOT, "assets", "own_urdf", "dexterous_hand",
                          "urdf", "dexterous_hand.urdf")
 MESH_DIR = os.path.join(WS_ROOT, "assets", "own_urdf", "dexterous_hand", "meshes")
 OUT_MD = os.path.join(WS_ROOT, "docs", "自研手几何数据.md")
-RENDER_DIR = os.path.join(WS_ROOT, "docs", "hand_renders")
+RENDER_DIR = os.path.join(WS_ROOT, "own_hand", "renders", "hand")
 
 sys.path.insert(0, os.path.join(WS_ROOT, "scripts"))
 
