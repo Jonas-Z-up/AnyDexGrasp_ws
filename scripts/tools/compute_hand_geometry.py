@@ -158,13 +158,29 @@ def set_motors(p, hand, joint_idx, motor_positions):
 
 
 def link_frames(p, hand):
-    """所有 link 的 world 位姿 → {link名: (pos(3,), R(3,3))}。"""
+    """所有 link 的 base 系位姿 → {link名: (pos(3,), R(3,3))}。
+
+    pybullet getLinkState 给的是 world 位姿; 此处必须用 base_link 的 world
+    位姿归一。旧实现把 base_link 硬编码为原点, 仅当手停在 world 原点时成立;
+    手被 resetBasePositionAndOrientation 移动后再采样 (如渲染脚本先摆 t5
+    再算 t2 包络), 接触点全部落在漂浮坐标系里, 包络几何被静默污染。
+    手在原点时结果与旧实现逐字节相同。
+    """
+    # 注意: getBasePositionAndOrientation 返回的是 base 的质心(COM)系, 不是
+    # URDF link 系; 两者差 getDynamicsInfo 的局部惯性偏移, 必须补偿, 否则
+    # 归一会引入惯性偏移量的系统误差。
+    pos_com, orn_com = p.getBasePositionAndOrientation(hand)
+    R_com = np.array(p.getMatrixFromQuaternion(orn_com)).reshape(3, 3)
+    di = p.getDynamicsInfo(hand, -1)
+    p_loc, q_loc = np.array(di[3]), np.array(di[4])
+    R_loc = np.array(p.getMatrixFromQuaternion(q_loc)).reshape(3, 3)
+    R0 = R_com @ R_loc.T
+    p0 = np.array(pos_com) - R0 @ p_loc
     frames = {"base_link": (np.zeros(3), np.eye(3))}
     for i in range(p.getNumJoints(hand)):
         st = p.getLinkState(hand, i, computeForwardKinematics=1)
-        pos = np.array(st[4])                    # worldLinkFramePosition
-        quat = st[5]                             # worldLinkFrameOrientation
-        R = np.array(p.getMatrixFromQuaternion(quat)).reshape(3, 3)
+        pos = R0.T @ (np.array(st[4]) - p0)
+        R = R0.T @ np.array(p.getMatrixFromQuaternion(st[5])).reshape(3, 3)
         name = p.getJointInfo(hand, i)[12].decode()
         frames[name] = (pos, R)
     return frames
@@ -177,14 +193,30 @@ def tip_positions(p, hand, joint_idx, motor_positions):
 
 
 def link_surface_points(p, hand, link_names, samples=3000):
-    """参与指节 mesh 表面采样点（手坐标系）。open3d 加载 STL。"""
+    """参与指节 mesh 表面采样点（手坐标系）。open3d 加载 STL。
+
+    采样 = 面积加权三角面采样 + 固定种子。旧实现用 sample_points_uniformly,
+    其 Python 绑定无 seed 参数, 跨进程质心抖动会让接触三角形法向摆动
+    (近退化组合尤甚, 如 Type 2 拇指/食指/中指尖三点近共线), 导致锚定位姿
+    厘米级漂移、法兰高度逐次运行不一致 (实测 Type 2 在 1.1~7.1cm 间跳动)。
+    """
     import open3d as o3d
     fr = link_frames(p, hand)
+    rng = np.random.RandomState(0)
     pts_all = []
     for ln in link_names:
         mesh = o3d.io.read_triangle_mesh(os.path.join(MESH_DIR, ln + ".STL"))
-        pc = mesh.sample_points_uniformly(number_of_points=samples)
-        pts = np.asarray(pc.points)
+        v = np.asarray(mesh.vertices)
+        f = np.asarray(mesh.triangles)
+        e1 = v[f[:, 1]] - v[f[:, 0]]
+        e2 = v[f[:, 2]] - v[f[:, 0]]
+        area = np.clip(0.5 * np.linalg.norm(np.cross(e1, e2), axis=1), 1e-12, None)
+        tri = rng.choice(len(f), size=samples, p=area / area.sum())
+        r1, r2 = rng.rand(samples), rng.rand(samples)
+        s = np.sqrt(r1)
+        pts = ((1 - s)[:, None] * v[f[tri, 0]]
+               + (s * (1 - r2))[:, None] * v[f[tri, 1]]
+               + (s * r2)[:, None] * v[f[tri, 2]])
         R, t = fr[ln][1], fr[ln][0]
         pts_all.append(pts @ R.T + t)
     return np.vstack(pts_all)
