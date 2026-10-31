@@ -42,7 +42,12 @@ class HandCollisionDetector:
             self._cache[key] = links
         return self._cache[key]
 
-    def check(self, grasp_type, plan, threshold=0):
+    def check(self, grasp_type, plan, threshold=0, full_count=False):
+        """Reject at the first exceeded threshold unless full_count is requested.
+
+        A short-circuit count is a lower bound, never an exact total. Passing
+        candidates always traverse the complete sweep with unchanged geometry.
+        """
         if threshold < 0:
             raise ValueError("Negative collision threshold")
         T = np.asarray(plan["T_camera_hand"], dtype=float).reshape(4, 4)
@@ -72,9 +77,20 @@ class HandCollisionDetector:
         local_scene = local_scene[np.all(local_scene >= sweep_low, axis=1) &
                                   np.all(local_scene <= sweep_high, axis=1)]
         hits = np.zeros(len(local_scene), dtype=bool)
+        first_collision = None
+
+        def result(early_exit):
+            count = int(hits.sum())
+            return {"passed": count <= threshold, "collision_points": count,
+                    "collision_points_exact": not early_exit,
+                    "early_exit": early_exit, "first_collision": first_collision,
+                    "threshold": int(threshold), "margin_m": self.margin,
+                    "sweep_step_m": self.step, "surface_only_links": surface_only,
+                    "model": "own_urdf_preshape", "scope": "preshape_descent_only"}
+
         for offset in np.linspace(0, distance, n + 1):
             points = local_scene - direction_local * offset
-            for scene, low, high, watertight in links:
+            for link_index, (scene, low, high, watertight) in enumerate(links):
                 indices = np.flatnonzero(~hits & np.all(points >= low - padding, axis=1)
                                          & np.all(points <= high + padding, axis=1))
                 if not len(indices):
@@ -82,9 +98,15 @@ class HandCollisionDetector:
                 query = o3d.core.Tensor(points[indices].astype(np.float32))
                 values = (scene.compute_signed_distance(query, nthreads=1, nsamples=3)
                           if watertight else scene.compute_distance(query, nthreads=1))
-                hits[indices[values.numpy() <= padding]] = True
-        count = int(hits.sum())
-        return {"passed": count <= threshold, "collision_points": count,
-                "threshold": int(threshold), "margin_m": self.margin,
-                "sweep_step_m": self.step, "surface_only_links": surface_only,
-                "model": "own_urdf_preshape", "scope": "preshape_descent_only"}
+                collided = indices[values.numpy() <= padding]
+                hits[collided] = True
+                if len(collided) and first_collision is None:
+                    # Measured scene points, expressed in camera coordinates.
+                    sample = collided[np.linspace(0, len(collided) - 1,
+                                                  min(100, len(collided)), dtype=int)]
+                    first_collision = {
+                        "link_index": link_index, "sweep_offset_m": float(offset),
+                        "points_camera": (local_scene[sample] @ R.T + translation).tolist()}
+                if not full_count and hits.sum() > threshold:
+                    return result(True)
+        return result(False)

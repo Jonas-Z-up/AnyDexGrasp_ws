@@ -55,7 +55,7 @@ DROP_SETTLE_S = 1.0             # 松手后等待秒数 (看物体掉落)
 # 准备点 — 安全中间位姿, MoveL 的可靠起点
 PREP_RPYXYZ = (0.0, -0.094, 0.0, 0.2, 0.0, 0.3)
 # 观测位姿 [roll, pitch, yaw, x, y, z]
-OBSERVE_RPYXYZ = (0.0, 1.057, 0.0, 0.3, 0.0, 0.35)
+OBSERVE_RPYXYZ = (0.0, 1.057, 0.0, 0.3, -0.15, 0.35)
 # 抓取参数
 APPROACH_Z = gp.APPROACH_Z       # 共享抓取计划的接近距离 (m)
 LIFT_Z = gp.LIFT_Z               # 共享抓取计划的上提距离 (m)

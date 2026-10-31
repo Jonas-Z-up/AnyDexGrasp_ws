@@ -108,6 +108,34 @@ class CollisionTests(unittest.TestCase):
     def test_clear_path(self):
         self.assertTrue(self.check([[.3, .3, .3]])["passed"])
 
+    def test_early_rejection_matches_full_sweep_and_marks_lower_bound(self):
+        points = [[.01, .01, z] for z in [.01, .04, .07, .10, .13]]
+        points.append([.3, .3, .3])
+        detector = HandCollisionDetector(points, mesh_provider=lambda _: [self.box])
+        for threshold in [0, 2, 5]:
+            fast = detector.check(2, self.plan, threshold)
+            full = detector.check(2, self.plan, threshold, full_count=True)
+            self.assertEqual(fast["passed"], full["passed"])
+            self.assertLessEqual(fast["collision_points"], full["collision_points"])
+            self.assertTrue(full["collision_points_exact"])
+            if not fast["passed"]:
+                self.assertTrue(fast["early_exit"])
+                self.assertFalse(fast["collision_points_exact"])
+            else:
+                self.assertTrue(fast["collision_points_exact"])
+
+    def test_contact_points_are_measured_camera_points(self):
+        R = Rotation.from_euler("y", .5).as_matrix()
+        T = gp.transform(R, [.3, .1, .2])
+        point = R @ [.01, .01, .01] + T[:3, 3] + [.06, 0, 0]
+        plan = dict(T_camera_hand=T.tolist(), approach_distance=.12,
+                    pregrasp_direction_camera=[1., 0., 0.])
+        result = self.check([point], plan)
+        contact = result["first_collision"]
+        self.assertIsNotNone(contact)
+        np.testing.assert_allclose(contact["points_camera"], [point])
+        self.assertGreater(contact["sweep_offset_m"], 0)
+
     def test_non_axis_direction_and_rotation(self):
         plan = dict(T_camera_hand=gp.transform(Rotation.from_euler("y", .5).as_matrix(), [.3, .1, .2]).tolist(),
                     approach_distance=.12, pregrasp_direction_camera=[1., 0., 0.])
@@ -258,6 +286,46 @@ if __name__ == "__main__":
 
 
 class ExecutionTests(unittest.TestCase):
+    def test_rejected_preview_opens_diagnostic_without_executable_candidate(self):
+        import own_preview
+        contact = dict(link_index=0, sweep_offset_m=.06,
+                       points_camera=[[0., 0., .4]])
+        collision = dict(passed=False, collision_points=1,
+                         collision_points_exact=False, early_exit=True,
+                         first_collision=contact, model="own_urdf_preshape")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            calib, intrinsics, output = tmp/'calib.json', tmp/'intrinsics.json', tmp/'latest.json'
+            gp.write_json(calib, dict(R_cam2flange=np.eye(3).tolist(), t_cam2flange=[0, 0, 0]))
+            gp.write_json(intrinsics, dict(fx=100, fy=100, ppx=0, ppy=0))
+            args = SimpleNamespace(calibration=str(calib), intrinsics=str(intrinsics),
+                                   output=str(output), collision=True, collision_margin=.003,
+                                   candidate_limit=1, topk=1, visualize=True,
+                                   save_debug_scene=False, collision_full_count=False)
+            ggarray = np.array([[.95, .06, .02, .01, *np.eye(3).ravel(), .3, 0, .4, -1]])
+            with patch.object(own_preview, 'HandCollisionDetector') as detector, \
+                    patch.object(own_preview.ohg, 'hand_mesh_at_pose',
+                                 return_value=o3d.geometry.TriangleMesh()) as mesh, \
+                    patch.object(o3d.visualization, 'draw_geometries') as draw:
+                detector.return_value.check.return_value = collision
+                status = own_preview.run(args, ggarray, np.array([.9]), np.array([2]),
+                                         np.array([.02]), np.zeros((1, 480)),
+                                         np.array([[400]], dtype=np.uint16), np.zeros((1, 1, 3)),
+                                         dict(captured_at=time.time(), frame_sequence=2), None, time.time())
+            self.assertEqual(status, 6)
+            result = json.loads(output.read_text())
+            self.assertEqual(result['candidates'], [])
+            self.assertEqual(result['num_output_grasps'], 0)
+            self.assertEqual(result['status'], 'no_collision_free_candidate')
+            draw.assert_called_once()
+            self.assertIn('DIAGNOSTIC ONLY', draw.call_args.kwargs['window_name'])
+            self.assertGreater(len(draw.call_args.args[0]), 4)  # Collision markers.
+            plan = result['tested_candidates'][0]['plan']
+            T = np.array(plan['T_camera_hand'])
+            expected_position = T[:3, 3] + np.array(plan['pregrasp_direction_camera']) * .06
+            np.testing.assert_allclose(mesh.call_args.args[0], expected_position)
+            self.assertFalse(detector.return_value.check.call_args.kwargs['full_count'])
+
     def test_own_preview_archive_matches_offline_replay(self):
         import own_preview
         spec = importlib.util.spec_from_file_location('preview_replay', ROOT/'scripts/tools/replay_grasp.py')

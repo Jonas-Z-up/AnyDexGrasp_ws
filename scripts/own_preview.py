@@ -31,15 +31,19 @@ def run(args, ggarray, scores, types, predicted_depths, features,
     run_dir.mkdir(parents=True)
     scene = gp.depth_cloud(depths, intrinsics)
     bundle = run_dir / "capture.npz"
+    print("[own] 保存 RGB-D 快照与候选，供离线排查...", flush=True)
     np.savez_compressed(str(bundle), depth=depths, color=colors, scene_points=scene,
                         ggarray=ggarray, scores=scores, network_types=types,
                         predicted_depths=predicted_depths, grasp_features=features)
     detector = HandCollisionDetector(scene, margin=args.collision_margin,
                                      step=gp.PATH_STEP) if args.collision else None
+    print("[own] 碰撞场景 %d 点（保留桌面）；正在初始化自研手几何..." % len(scene),
+          flush=True)
     accepted, decisions, tested = [], [], []
     two_fingers = GraspGroup(ggarray)
     order = np.argsort(-np.asarray(scores), kind="stable")[:args.candidate_limit]
-    for index in order:
+    for rank, index in enumerate(order, 1):
+        candidate_started = time.monotonic()
         g = two_fingers[int(index)]
         network_type = int(types[index])
         own_type = OWN_TYPE_MAP[network_type]
@@ -60,8 +64,24 @@ def run(args, ggarray, scores, types, predicted_depths, features,
             "closed_motors": list(ohg.motor_positions(own_type, "closed").values()),
         }
         plan = gp.build_plan(candidate, calibration, flange)
-        collision = (detector.check(own_type, plan) if detector else
+        print("[own] 候选 %d/%d，id=%d，type=%d：检查中..." %
+              (rank, len(order), index, own_type), flush=True)
+        collision = (detector.check(own_type, plan,
+                                   full_count=getattr(args, "collision_full_count", False)) if detector else
                      {"passed": False, "model": "unchecked", "scope": "none"})
+        if collision.get("first_collision"):
+            contact = collision["first_collision"]
+            contact["link_name"] = ohg.ALL_LINKS[contact["link_index"]]
+        elapsed = time.monotonic() - candidate_started
+        candidate["check_elapsed_sec"] = elapsed
+        count_text = (str(collision.get("collision_points", 0)) if
+                      collision.get("collision_points_exact", True) else
+                      ">=%d" % collision["collision_points"])
+        verdict = ("未检查（仅预览）" if detector is None else
+                   "通过" if collision["passed"] else "拒绝，碰撞点 " + count_text)
+        print("[own]   %s；%.2fs%s" %
+              (verdict, elapsed, "；部件=" + collision["first_collision"]["link_name"]
+               if collision.get("first_collision") else ""), flush=True)
         candidate["plan"], candidate["collision"] = plan, collision
         candidate["collision_checked"] = detector is not None
         tested.append(candidate)
@@ -99,13 +119,25 @@ def run(args, ggarray, scores, types, predicted_depths, features,
     gp.write_json(args.output, result)
     print("[own] 检查 %d 个候选，保留 %d 个；回放：%s" %
           (len(decisions), len(accepted), run_dir / "result.json"))
-    if not accepted:
-        return 6
-    chosen = accepted[0]
+    diagnostic_only = not accepted
+    if diagnostic_only:
+        print("[own] 没有通过碰撞检查的候选；排名第一的拒绝候选仅供诊断，禁止执行。", flush=True)
+    chosen = accepted[0] if accepted else tested[0]
     print("[own] 预览 candidate_id=%d，type=%d，score=%.3f（Inspire迁移评分）" %
           (chosen["candidate_id"], chosen["grasp_type"], chosen["score"]))
+    print("[own] 执行朝向=%s，偏差=%.1f°，最终法兰位置=%s" %
+          ("网络朝向" if chosen["plan"]["used_network_orientation"] else "固定朝向回退",
+           chosen["plan"]["orientation_deviation_deg"],
+           np.round(chosen["plan"]["final_pose"][3:], 4).tolist()), flush=True)
     if args.visualize or args.save_debug_scene:
-        T = np.asarray(chosen["plan"]["T_camera_hand"])
+        T = np.asarray(chosen["plan"]["T_camera_hand"]).copy()
+        contact = chosen["collision"].get("first_collision") if diagnostic_only else None
+        if contact:
+            T[:3, 3] += (np.asarray(chosen["plan"]["pregrasp_direction_camera"]) *
+                         contact["sweep_offset_m"])
+            print("[own] 红色手模型=检测到碰撞时的位姿；黄色点=碰撞点采样；"
+                  "部件=%s，距最终位置 %.3fm" %
+                  (contact["link_name"], contact["sweep_offset_m"]), flush=True)
         mesh = ohg.hand_mesh_at_pose(T[:3, 3], T[:3, :3], chosen["grasp_type"],
                                      color=[1., .1, .1])
         cloud = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(scene))
@@ -118,5 +150,14 @@ def run(args, ggarray, scores, types, predicted_depths, features,
             o3d.io.write_point_cloud(str(run_dir / "scene.ply"), cloud)
             o3d.io.write_triangle_mesh(str(run_dir / "preshape.ply"), mesh)
         if args.visualize:
-            o3d.visualization.draw_geometries([cloud.voxel_down_sample(.003), mesh, frame, flange_frame])
-    return 0
+            geometries = [cloud.voxel_down_sample(.003), mesh, frame, flange_frame]
+            if contact:
+                for point in contact["points_camera"][:30]:
+                    marker = o3d.geometry.TriangleMesh.create_sphere(radius=.002)
+                    marker.translate(point).paint_uniform_color([1., 1., 0.])
+                    geometries.append(marker)
+            title = ("Own hand: COLLISION - DIAGNOSTIC ONLY" if diagnostic_only else
+                     "Own hand: candidate preview")
+            print("[own] 打开 Open3D 窗口：" + title, flush=True)
+            o3d.visualization.draw_geometries(geometries, window_name=title)
+    return 6 if diagnostic_only else 0

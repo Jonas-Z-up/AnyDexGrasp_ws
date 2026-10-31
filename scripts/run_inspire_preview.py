@@ -31,6 +31,8 @@ def parse_args():
     parser.add_argument("--candidate-limit", type=int, default=50,
                         help="最多检查的自研手候选数")
     parser.add_argument("--collision-margin", type=float, default=0.003)
+    parser.add_argument("--collision-full-count", action="store_true",
+                        help="调试模式：统计全部碰撞点；默认发现超阈值碰撞即拒绝候选")
     parser.add_argument("--observation", default=str(gp.OBSERVATION_PATH))
     parser.add_argument("--voxel_size", type=float, default=0.005)
 

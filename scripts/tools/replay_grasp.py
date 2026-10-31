@@ -42,7 +42,12 @@ def replay(path, replan=False, output=None):
         detector.margin = candidate["collision"].get("margin_m", .003)
         detector.step = candidate["collision"].get("sweep_step_m", gp.PATH_STEP)
         collision = detector.check(candidate["grasp_type"], plan,
-                                   candidate["collision"].get("threshold", 0))
+                                   candidate["collision"].get("threshold", 0),
+                                   full_count=candidate["collision"].get("collision_points_exact", True))
+        if collision.get("first_collision"):
+            import own_hand_grasp as ohg
+            contact = collision["first_collision"]
+            contact["link_name"] = ohg.ALL_LINKS[contact["link_index"]]
         checks.append({"candidate_id": candidate["candidate_id"],
                        "previous": candidate["collision"], "replayed": collision})
     report = {"diagnostic_only": True, "replanned": replan, "source_changes": changed,
