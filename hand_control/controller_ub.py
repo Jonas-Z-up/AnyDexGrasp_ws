@@ -10,7 +10,7 @@ class HandController:
     # Windows 平台下使用 COM 端口:
     # def __init__(self, port='COM7', baudrate=921600):
     # Linux 平台下使用 /dev/serial/by-id/ 端口:
-    def __init__(self, port='/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0', baudrate=921600):
+    def __init__(self, port='/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0', baudrate=115200):
         self.port = port
         self.baudrate = baudrate
         self.ser = None
