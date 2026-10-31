@@ -63,87 +63,9 @@ INSPIREHANDR_VOXElGRID = 0.003
 POINTCLOUD_AUGMENT_NUM = 10
 RANDOM_GRASP = True
 
-def parse_preds(end_points, use_v2=False):
-    ## load preds
-    before_generator = end_points['before_generator']  # (B, Ns, 256)
-    point_features = end_points['point_features']  # (B, Ns, 512)
-    coords = end_points['sinput'].C  # (\Sigma Ni, 4)
-    objectness_pred = end_points['stage1_objectness_pred']  # (Sigma Ni, 2)
-    objectness_mask = torch.argmax(objectness_pred, dim=1).bool()  # (\Sigma Ni,)
-    seed_xyz = end_points['stage2_seed_xyz']  # (B, Ns, 3)
-    seed_inds = end_points['stage2_seed_inds']  # (B, Ns)
-    grasp_view_xyz = end_points['stage2_view_xyz']  # (B, Ns, 3)
-    grasp_view_inds = end_points['stage2_view_inds']
-    grasp_view_scores = end_points['stage2_view_scores']
-    grasp_scores = end_points['stage3_grasp_scores']  # (B, Ns, A, D)
-    grasp_features_two_finger = end_points['stage3_grasp_features'].view(grasp_scores.size()[0], grasp_scores.size()[1], -1) # (B, Ns, 3 + C)
-    grasp_widths = MAX_GRASP_WIDTH * end_points['stage3_normalized_grasp_widths']  # (B, Ns, A, D)
-    grasp_widths[grasp_widths > MAX_GRASP_WIDTH] = MAX_GRASP_WIDTH
+# Hardware-free decoder with aligned objectness filtering (ported from 1030).
+from grasp_decoding import parse_preds
 
-    grasp_preds = []
-    grasp_features = []
-    grasp_vdistance_list = []
-    for i in range(BATCH_SIZE):
-        
-        cloud_mask_i = (coords[:, 0] == i)
-        seed_inds_i = seed_inds[i]
-        objectness_mask_i = objectness_mask[cloud_mask_i][seed_inds_i]  # (Ns,)
-
-        if objectness_mask_i.any() == False:
-            continue
-
-        seed_xyz_i = seed_xyz[i] # [objectness_mask_i]  # (Ns', 3)
-        point_features_i = point_features[i] # [objectness_mask_i]
-        
-        seed_inds_i = seed_inds_i # [objectness_mask_i]
-        before_generator_i = before_generator[i] # [objectness_mask_i]
-        grasp_view_xyz_i = grasp_view_xyz[i] # [objectness_mask_i]  # (Ns', 3)
-        grasp_view_inds_i = grasp_view_inds[i] # [objectness_mask_i]
-        grasp_view_scores_i = grasp_view_scores[i] # [objectness_mask_i]
-        grasp_scores_i = grasp_scores[i] # [objectness_mask_i]  # (Ns', A, D)
-        grasp_widths_i = grasp_widths[i] # [objectness_mask_i] # (Ns', A, D)
-        
-        Ns, A, D = grasp_scores_i.size()
-        grasp_features_two_finger_i = grasp_features_two_finger[i] # [objectness_mask_i] # (Ns', 3 + C)
-        grasp_scores_i_A_D = copy.deepcopy(grasp_scores_i).view(Ns, -1)
-
-        grasp_scores_i = torch.minimum(grasp_scores_i[:,:24,:], grasp_scores_i[:,24:,:])
-        seed_inds_i = seed_inds_i.view(Ns, -1)
-        grasp_view_inds_i = grasp_view_inds_i.view(Ns, -1)
-        grasp_view_scores_i = grasp_view_scores_i.view(Ns, -1)
-
-        grasp_scores_i, grasp_angles_class_i = torch.max(grasp_scores_i, dim=1) # (Ns', D), (Ns', D)
-        grasp_angles_i = (grasp_angles_class_i.float()-12) / 24 * np.pi  # (Ns', topk, D)
-
-        # grasp width & vdistance
-        grasp_angles_class_i = grasp_angles_class_i.unsqueeze(1) # (Ns', 1, D)
-        grasp_widths_pos_i = torch.gather(grasp_widths_i, 1, grasp_angles_class_i).squeeze(1) # (Ns', D)
-        grasp_widths_neg_i = torch.gather(grasp_widths_i, 1, grasp_angles_class_i+24).squeeze(1) # (Ns', D)
-
-        ## slice preds by grasp score/depth
-        # grasp score & depth
-        grasp_scores_i, grasp_depths_class_i = torch.max(grasp_scores_i, dim=1, keepdims=True) # (Ns', 1), (Ns', 1)
-        grasp_depths_i = (grasp_depths_class_i.float() + 1) * 0.01  # (Ns'*topk, 1)
-
-        grasp_depths_i -= 0.01
-        grasp_depths_i[grasp_depths_class_i==0] = 0.005
-        # grasp angle & width & vdistance
-        grasp_angles_i = torch.gather(grasp_angles_i, 1, grasp_depths_class_i) # (Ns', 1)
-        grasp_widths_pos_i = torch.gather(grasp_widths_pos_i, 1, grasp_depths_class_i) # (Ns', 1)
-        grasp_widths_neg_i = torch.gather(grasp_widths_neg_i, 1, grasp_depths_class_i) # (Ns', 1)
-
-        # convert to rotation matrix
-        rotation_matrices_i = batch_viewpoint_params_to_matrix(-grasp_view_xyz_i, grasp_angles_i.squeeze(1))
-
-        # # adjust gripper centers
-        grasp_widths_i = grasp_widths_pos_i + grasp_widths_neg_i
-        rotation_matrices_i = rotation_matrices_i.view(Ns, 9)
-
-        # merge preds
-        grasp_preds.append(torch.cat([grasp_scores_i, grasp_widths_i, grasp_depths_i, rotation_matrices_i, seed_xyz_i],axis=1))  # (Ns, 15)
-        grasp_features.append(torch.cat([grasp_scores_i_A_D, grasp_features_two_finger_i, before_generator_i, point_features_i, grasp_view_inds_i, grasp_view_scores_i, seed_inds_i, grasp_angles_i*24/np.pi+12, grasp_depths_i], axis=1)) # (Ns'*3, A, D)
-        
-    return grasp_preds, grasp_features
 
 def get_net(checkpoint_path, use_v2=False):
     if use_v2:
@@ -508,11 +430,13 @@ def get_inspire_model(inspire_models_path):
                 inspire_models[model_type][model_class] = inspire_model
     return inspire_models
 
-def get_inspire_depth_type(inspire_models, grasp_features_dic, ggarray, grasp_features):
+def get_inspire_depth_type(inspire_models, grasp_features_dic, ggarray, grasp_features, fixed_type=None):
     if RANDOM_GRASP:
-        inspire_type = np.random.randint(0, NUM_OF_INSPIRE_TYPE, (len(ggarray),))
+        inspire_type = np.random.randint(1, NUM_OF_INSPIRE_TYPE + 1, (len(ggarray),))
         inspire_depth = (np.random.randint(0, 4, (len(ggarray),)))
-        inspire_depth[inspire_type==5] = inspire_depth[inspire_type==5] + 2
+        if fixed_type is not None:
+            inspire_type[:] = fixed_type
+        inspire_depth[inspire_type==6] = inspire_depth[inspire_type==6] + 2
         inspire_depth = inspire_depth * 0.01
         scores = ggarray[:, 0] 
         return inspire_depth, inspire_type, scores, ggarray, grasp_features
@@ -543,7 +467,12 @@ def get_inspire_depth_type(inspire_models, grasp_features_dic, ggarray, grasp_fe
             select_index = (two_fingers_depth).view(-1, 1) * NUM_OF_INSPIRE_DEPTH + base
             inspire_depth_type_scores.append(grasp_pred.gather(1, select_index))
     inspire_depth_type_scores = torch.cat(inspire_depth_type_scores, axis=1).view(-1) # (B, NUM_OF_INSPIRE_DEPTH*NUM_OF_INSPIRE_TYPE)
-    scores, index = inspire_depth_type_scores.topk(min(3000, inspire_depth_type_scores.size()[0]))
+    eligible = torch.arange(inspire_depth_type_scores.numel(), device=device)
+    if fixed_type is not None:
+        predicted_type = (eligible % (NUM_OF_INSPIRE_DEPTH * NUM_OF_INSPIRE_TYPE)) // NUM_OF_INSPIRE_DEPTH + 1
+        eligible = eligible[predicted_type == fixed_type]
+    scores, selected = inspire_depth_type_scores[eligible].topk(min(3000, eligible.numel()))
+    index = eligible[selected]
     pose_index = (index / (NUM_OF_INSPIRE_DEPTH * NUM_OF_INSPIRE_TYPE)).long()
     ggarray = torch.tensor(copy.deepcopy(ggarray), device=device)[pose_index]
     grasp_features = torch.tensor(copy.deepcopy(grasp_features), device=device)[pose_index]

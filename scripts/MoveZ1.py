@@ -105,6 +105,8 @@ class Z1RosController:
         else:
             raise ValueError("目标必须是 x y z 或 roll pitch yaw x y z")
 
+        if not np.isfinite(pose).all():
+            raise ValueError("目标位姿必须为有限数值")
         if self.safe_check:
             self.check_pose_safe(pose)
         return pose
@@ -122,7 +124,7 @@ class Z1RosController:
         try:
             if use_prepare:
                 print(f"[路径] 先移动至基准准备点: {self.z1_init_pose}", flush=True)
-                ok_prepare = self.arm.MoveJ(self.z1_init_pose, 0.0, self.move_speed)
+                ok_prepare = self.arm.MoveJ(self.z1_init_pose, self.move_speed)
                 if not ok_prepare:
                     raise RuntimeError("移动到基准准备点失败")
                 time.sleep(0.3)
@@ -132,10 +134,10 @@ class Z1RosController:
                 print(f"[路径] 从基准准备点移动至目标: {target_pose}", flush=True)
             else:
                 print(f"[路径] 从当前位置点动至目标: {target_pose}", flush=True)
-            ok = self.arm.MoveL(target_pose, 0.0, self.move_speed)
+            ok = self.arm.MoveL(target_pose, self.move_speed)
             if not ok:
                 print("[路径] MoveL 失败，尝试回退到 MoveJ 关节空间运动...", flush=True)
-                ok = self.arm.MoveJ(target_pose, 0.0, self.move_speed)
+                ok = self.arm.MoveJ(target_pose, self.move_speed)
                 if not ok:
                     raise RuntimeError("MoveL 和 MoveJ 均失败，目标不可达")
                 print("[路径] MoveJ 回退成功。", flush=True)
@@ -144,12 +146,31 @@ class Z1RosController:
             raise
 
     def move_j(self, target_pose):
-        """纯 MoveJ 关节空间运动 — 只需终点 IK，不会失败。"""
+        """纯 MoveJ；SDK 失败时上报，不代表路径已做碰撞检查。"""
         print(f"[路径] MoveJ 关节空间运动至目标: {target_pose}", flush=True)
-        ok = self.arm.MoveJ(target_pose, 0.0, self.move_speed)
+        ok = self.arm.MoveJ(target_pose, self.move_speed)
         if not ok:
             raise RuntimeError("MoveJ 失败，目标不可达")
         print("[路径] MoveJ 完成。", flush=True)
+
+    def check_ik(self, target_pose, seed=None):
+        """Read-only global IK, or a local solution near the preceding sample."""
+        target_pose = self.make_target_pose(target_pose)
+        q_past = np.zeros(6) if seed is None else np.asarray(seed, dtype=float).reshape(6)
+        if not np.isfinite(q_past).all():
+            raise ValueError("IK seed 必须为有限数值")
+        ok, q = self.arm_model.inverseKinematics(
+            unitree_arm_interface.postureToHomo(target_pose), q_past, seed is None)
+        if not ok:
+            return False, np.zeros(6)
+        q = np.asarray(q, dtype=float).reshape(6)
+        low = np.asarray(self.arm_model.getJointQMin()).reshape(6)
+        high = np.asarray(self.arm_model.getJointQMax()).reshape(6)
+        return bool(np.isfinite(q).all() and np.all(q >= low) and np.all(q <= high)), q
+
+    def move_l_strict(self, target_pose):
+        if not self.arm.MoveL(target_pose, self.move_speed):
+            raise RuntimeError("严格 MoveL 失败；未回退 MoveJ")
 
     def manual_loop(self):
         print("\n[手动模式] 输入 x y z，程序会自动移动到 z + clearance 的上方点。")
@@ -174,6 +195,8 @@ class Z1RosController:
         print("  pose r p y x y z         移动到完整末端位姿", flush=True)
         print("  jogpose r p y x y z      标定点动到完整末端位姿，不经过基准准备点", flush=True)
         print("  movejpose r p y x y z    同 jogpose，兼容别名", flush=True)
+        print("  movel r p y x y z        严格直线运动，失败不回退", flush=True)
+        print("  checkik pose6 [seed6]     仅求逆解，不发送运动命令", flush=True)
         print("  getpose                  查询当前法兰末端位姿 (r p y x y z)", flush=True)
         print("  home                     快速回零/准备点", flush=True)
         print("  quit                     退出", flush=True)
@@ -195,6 +218,21 @@ class Z1RosController:
                 if command == "getpose":
                     pose = self.get_current_flange_pose()
                     print(f"POS {pose[0]:.6f} {pose[1]:.6f} {pose[2]:.6f} {pose[3]:.6f} {pose[4]:.6f} {pose[5]:.6f}", flush=True)
+                    continue
+                if command == "checkik":
+                    values = [float(p) for p in parts[1:]]
+                    if len(values) not in (6, 12):
+                        raise ValueError("checkik 需要 pose6 或 pose6 seed6")
+                    ok, q = self.check_ik(values[:6], values[6:] if len(values) == 12 else None)
+                    print("IK " + ("OK " + " ".join("%.9f" % v for v in q)
+                                   if ok else "NO"), flush=True)
+                    continue
+                if command == "movel":
+                    values = [float(p) for p in parts[1:]]
+                    if len(values) != 6:
+                        raise ValueError("movel 需要 6 个数")
+                    self.move_l_strict(self.make_target_pose(values))
+                    print("DONE movel", flush=True)
                     continue
                 if command == "home":
                     self.go_home()

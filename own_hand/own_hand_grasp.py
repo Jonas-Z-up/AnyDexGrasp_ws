@@ -177,34 +177,62 @@ def base_pose_from_grasp(two_finger_grasp, grasp_type):
     return t_wb, R_wb
 
 
+def motor_positions(grasp_type, stage="preshape"):
+    """The same motor commands used by hand_bridge, without connecting hardware."""
+    from hand_bridge import PRESHAPE_LIBRARY
+    preset = PRESHAPE_LIBRARY[int(grasp_type)]
+    motors = {i + 1: int(v) for i, v in enumerate(preset["broadcast"])}
+    if stage == "closed":
+        for mid, _force, _speed, position in preset["close"]:
+            motors[mid] = int(position)
+    elif stage != "preshape":
+        raise ValueError("stage must be preshape or closed")
+    return motors
+
+
+def link_meshes_for_motors(motors):
+    """Link meshes in base_link coordinates at an explicit six-motor posture."""
+    import open3d as o3d
+    st = _init()
+    # Complete vectors prevent stale joints leaking between candidate types.
+    chg.set_motors(st["p"], st["hand"], st["jidx"], motors)
+    frames = chg.link_frames(st["p"], st["hand"])
+    meshes = []
+    for name in ALL_LINKS:
+        m = o3d.io.read_triangle_mesh(os.path.join(chg.MESH_DIR, name + ".STL"))
+        if m.is_empty():
+            raise ValueError("Missing hand mesh: " + name)
+        m.remove_duplicated_vertices()
+        m.remove_degenerate_triangles()
+        T = np.eye(4)
+        T[:3, :3], T[:3, 3] = frames[name][1], frames[name][0]
+        m.transform(T)
+        meshes.append(m)
+    return meshes
+
+
+def hand_mesh_at_pose(translation, rotation, grasp_type, stage="preshape", color=None):
+    import open3d as o3d
+    mesh = o3d.geometry.TriangleMesh()
+    for link in link_meshes_for_motors(motor_positions(grasp_type, stage)):
+        mesh += link
+    T = np.eye(4)
+    T[:3, :3], T[:3, 3] = rotation, translation
+    mesh.transform(T)
+    if color is not None:
+        mesh.paint_uniform_color(color)
+    mesh.compute_vertex_normals()
+    return mesh
+
+
 def hand_mesh_at_grasp(two_finger_grasp, grasp_type, color=None):
     """按锚定位姿摆好的整手 open3d TriangleMesh（世界/相机系，闭合位姿手型）。
 
     depth 进深已由 base_pose_from_grasp 内部消费（锚定点推进），此处不再叠加。
     供 run_inspire_preview 的 own 模式可视化使用。
     """
-    import open3d as o3d
-
-    st = _init()
-    motors = chg.TYPE_CLOSE_MOTORS[int(grasp_type)]["motors"]
-    chg.set_motors(st["p"], st["hand"], st["jidx"], motors)
-    frames = chg.link_frames(st["p"], st["hand"])
-
     t_base, R_base = base_pose_from_grasp(two_finger_grasp, grasp_type)
-
-    mesh = o3d.geometry.TriangleMesh()
-    for ln in ALL_LINKS:
-        m = o3d.io.read_triangle_mesh(os.path.join(chg.MESH_DIR, ln + ".STL"))
-        R_l, t_l = frames[ln][1], frames[ln][0]
-        T_l = np.vstack([np.hstack([R_l, t_l.reshape(3, 1)]), [0, 0, 0, 1]])
-        m.transform(T_l)                 # 摆到闭合关节角 (base 系)
-        mesh += m
-    T = np.vstack([np.hstack([R_base, t_base.reshape(3, 1)]), [0, 0, 0, 1]])
-    mesh.transform(T)                    # 摆到锚定位姿 (世界/相机系)
-    if color is not None:
-        mesh.paint_uniform_color(color)
-    mesh.compute_vertex_normals()
-    return mesh
+    return hand_mesh_at_pose(t_base, R_base, grasp_type, stage="closed", color=color)
 
 
 # ── selftest ──────────────────────────────────────────────

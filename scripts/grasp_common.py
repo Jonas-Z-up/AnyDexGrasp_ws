@@ -89,6 +89,7 @@ def load_hand_config(path=None, model=None):
             "mount_yaw_deg": float(cfg.get("mount_yaw_deg_own", DEFAULT_MOUNT_YAW_DEG_OWN)),
             "orient_deviation_thresh_deg": float(cfg.get(
                 "orient_deviation_thresh_deg_own", DEFAULT_DEV_THRESH_DEG_OWN)),
+            "hand_mount_transform": cfg.get("T_flange_handbase_own"),
         }
     return {
         "hand_model": "inspire",
@@ -178,12 +179,34 @@ def compute_R_mount(mount_yaw_deg):
     return Rotation.from_euler("x", a).as_matrix()
 
 
+def resolve_hand_mount(cfg):
+    """Physical flange<-hand transform; optional full own-hand installation.
+
+    Existing Inspire yaw is a compensation angle, so its physical sign is
+    reversed. Own yaw retains that convention for backwards compatibility;
+    use T_flange_handbase_own for an unambiguous measured 4x4 installation.
+    """
+    value = cfg.get("hand_mount_transform")
+    if value is not None:
+        T = np.asarray(value, dtype=float).reshape(4, 4)
+        R = T[:3, :3]
+        if (not np.isfinite(T).all() or not np.allclose(T[3], [0, 0, 0, 1]) or
+                not np.allclose(R.T @ R, np.eye(3), atol=1e-6) or
+                not np.isclose(np.linalg.det(R), 1, atol=1e-6)):
+            raise ValueError("T_flange_handbase_own must be a rigid transform")
+        return T
+    T = np.eye(4)
+    T[:3, :3] = compute_R_mount(-cfg["mount_yaw_deg"])
+    T[0, 3] = cfg["hand_mount_z"]
+    return T
+
+
 def compute_grasp_target(grasp, R_c2f, t_c2f, flange_pose,
                          hand_mount_z=None, mount_yaw_deg=None,
                          dev_thresh_deg=None, offset_xyz=None,
                          offset_rpy_deg=None, z_comp_knots=None,
                          fixed_rpy=FIXED_RPY,
-                         force_fixed=False):
+                         force_fixed=False, hand_mount_transform=None):
     """网络抓取位姿（相机系）→ 法兰目标位姿（基座系）。
 
     纯函数，便于离线单测。返回：
@@ -202,6 +225,9 @@ def compute_grasp_target(grasp, R_c2f, t_c2f, flange_pose,
         范围外 clamp，只动 z）。None → 读 config；空 → 不补偿，逐字节等价旧行为。
         与 p_palm_base 同移 Δz（整手刚性平移），不触碰 rpy/approach/deviation。
     """
+    if hand_mount_transform is None:
+        current_cfg = load_hand_config(model=grasp.get("hand_model"))
+        hand_mount_transform = current_cfg.get("hand_mount_transform")
     if hand_mount_z is None or mount_yaw_deg is None or dev_thresh_deg is None:
         cfg = load_hand_config()
         hand_mount_z = hand_mount_z if hand_mount_z is not None else cfg["hand_mount_z"]
@@ -225,7 +251,13 @@ def compute_grasp_target(grasp, R_c2f, t_c2f, flange_pose,
     # 加在 p_palm_base 上，p_flange/指尖随动，三处（执行/预览/验证）保持一致。
     p_palm_base = p_palm_base + np.asarray(offset_xyz, dtype=float)
 
+    mount_translation = np.array([hand_mount_z, 0., 0.])
     R_mount = compute_R_mount(mount_yaw_deg)
+    if hand_mount_transform is not None:
+        physical_mount = resolve_hand_mount(
+            {"hand_mount_transform": hand_mount_transform})
+        R_mount = physical_mount[:3, :3].T
+        mount_translation = physical_mount[:3, 3]
     R_fixed = Rotation.from_euler("xyz", fixed_rpy).as_matrix()
 
     # 决定朝向（偏差闸门用 offset 前的原始 R_flange，offset_rpy 不影响"是否信任网络"）
@@ -260,7 +292,7 @@ def compute_grasp_target(grasp, R_c2f, t_c2f, flange_pose,
         approach = R_sel[:, 0]             # 指尖方向 = 法兰 +X（已含 offset）
 
     # 安装偏移补偿：法兰位置 = 掌心 − hand_mount_z × 接近方向
-    p_flange = p_palm_base - hand_mount_z * approach
+    p_flange = p_palm_base - R_sel @ mount_translation
 
     # 基座系 z 方向高度补偿（config z_comp_knots，分段线性，键 = 命令法兰 z = 补偿前）：
     # 吸收深度/高度相关的经验误差（R_c2f 手眼旋转残差的 z 项）。p_palm_base 同步平移

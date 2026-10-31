@@ -137,8 +137,10 @@ def write_record(history_path, rec):
 def descend_interruptible(z1, rpy, xyz_start, xyz_end,
                           step_mm=DESCEND_STEP_MM_DEFAULT,
                           interrupt_keys=DESCEND_INTERRUPT_KEYS,
-                          poll_s=DESCEND_POLL_S, dry_run=False):
-    """从 xyz_start 沿直线步进 MoveJ 下降到 xyz_end (保持 rpy),期间轮询键盘。
+                          poll_s=DESCEND_POLL_S, dry_run=False, strict_linear=False):
+    """从 xyz_start 分段下降到 xyz_end (保持 rpy),期间轮询键盘。
+
+    strict_linear=True 使用严格 MoveL；默认 MoveJ 保留标定版原行为。
 
     参数
     ----
@@ -173,7 +175,10 @@ def descend_interruptible(z1, rpy, xyz_start, xyz_end,
             frac = i / n
             pose = start + (end - start) * frac
             if not dry_run:
-                z1.movej(pose)
+                if strict_linear:
+                    z1.movel(pose)
+                else:
+                    z1.movej(pose)
             else:
                 print(f"  [descend] z={pose[5]:.3f}", flush=True)
             if is_tty:

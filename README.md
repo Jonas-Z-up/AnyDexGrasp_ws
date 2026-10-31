@@ -6,6 +6,8 @@
 
 **硬件配置**: Unitree Z1 机械臂 + RealSense D435i 深度相机 + 自研五指欠驱灵巧手（兼容 Inspire 手协议）
 
+**新版自研手管线**：统一姿态、自研手碰撞、多候选 IK 和离线回放已接入，详见 [使用与验证范围](docs/own_hand_pipeline.md)。更新后需重启相机进程。
+
 ## 目录结构
 
 ```
@@ -44,7 +46,7 @@ conda activate anydex
 cd ~/Projects/AnyDexGrasp_ws/scripts
 python realsense.py
 ```
-预期：D435i 开始采集，深度+彩色帧持续写入共享内存 `realsense_depth` 和 `realsense_color`。
+预期：D435i 开始采集，深度+彩色帧持续写入共享内存 `realsense_depth` 和 `realsense_color`，并通过 `realsense_frame_meta` 标记完整帧。
 
 
 ### 3. 启动抓取编排器 → 演示循环（终端A）
@@ -70,12 +72,12 @@ python run_inspire_preview.py --visualize --collision \
 python run_inspire_preview.py --visualize --collision \
     --min_depth 0.2 --max_depth 0.6 --fixed-type 5
 ```
-预期：弹出 Open3D 窗口显示抓取姿态（红色 Inspire 手 mesh + 蓝色两指夹爪 + 场景点云）。用鼠标检查姿态合理性。
+预期：弹出 Open3D 窗口显示抓取姿态（own 模式为红色自研手预塑形 mesh、手基座/法兰坐标系及场景点云）。用鼠标检查姿态合理性。
 
 
 ### 5. 确认并执行抓取（每轮）
 回到**终端A**，检查 Open3D 中的抓取姿态无误后，按**回车**。
-预期：Z1 自动执行抓取流程：接近→**空中张手+预塑形**→可打断下降（Space/Esc 暂停接管人工微调、Ctrl+C 回零）→抓取点逐指闭合→上提→丢弃位姿→松手→**`DROP_SETTLE_S`（默认 2s）后自动回观测位姿，进入下一轮**。每轮都需重新在终端B拍照推理、回到终端A按回车确认新位姿。手部等待/下降步长等时长都是**文件顶部常量**（`HAND_WAIT_S`/`DROP_SETTLE_S`/`DESCEND_STEP_MM`），非命令行参数。仅 Ctrl+C 回零下电退出。
+预期：Z1 自动执行抓取流程：接近→**空中张手+预塑形**→严格 MoveL 下降（Space/Esc 中止本轮并回零、Ctrl+C 回零；人工微调请用标定版）→抓取点逐指闭合→上提→丢弃位姿→松手→**`DROP_SETTLE_S`（默认 2s）后自动回观测位姿，进入下一轮**。每轮都需重新在终端B拍照推理、回到终端A按回车确认新位姿。手部等待/下降步长等时长都是**文件顶部常量**（`HAND_WAIT_S`/`DROP_SETTLE_S`/`DESCEND_STEP_MM`），非命令行参数。仅 Ctrl+C 回零下电退出。
 ### 眼在手上 vs 眼在手外
 
 

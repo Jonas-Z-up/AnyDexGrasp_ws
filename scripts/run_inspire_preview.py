@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import time
+from types import SimpleNamespace
 from multiprocessing import resource_tracker, shared_memory
 
 import numpy as np
@@ -12,6 +13,8 @@ from graspnetAPI import GraspGroup
 from scipy.spatial.transform import Rotation
 
 import grasp_common as gc
+import grasp_pipeline as gp
+from camera_snapshot import read_snapshot, META_NAME
 
 
 def parse_args():
@@ -25,12 +28,18 @@ def parse_args():
     parser.add_argument("--half_views", action="store_true")
     parser.add_argument("--score_thresh", type=float, default=0.85)
     parser.add_argument("--topk", type=int, default=10)
+    parser.add_argument("--candidate-limit", type=int, default=50,
+                        help="最多检查的自研手候选数")
+    parser.add_argument("--collision-margin", type=float, default=0.003)
+    parser.add_argument("--observation", default=str(gp.OBSERVATION_PATH))
     parser.add_argument("--voxel_size", type=float, default=0.005)
 
     parser.add_argument("--min_depth", type=float, default=0.2)
     parser.add_argument("--max_depth", type=float, default=0.6)
     
     parser.add_argument("--collision", action="store_true", default=True)
+    parser.add_argument("--no-collision", dest="collision", action="store_false",
+                        help="仅供预览；未检查的 own 结果不能自动执行")
     parser.add_argument("--random_grasp", action="store_true")
     parser.add_argument("--hand-model", dest="hand_model", choices=["inspire", "own"],
                         default=None,
@@ -38,12 +47,13 @@ def parse_args():
                              "缺省读 config/grasp_config.json 的 hand_model")
     parser.add_argument("--fixed-type", dest="fixed_type", type=int, default=None,
                         choices=range(1, 9),
-                        help="固定抓取类型 1-8 (A/B 实验排除选型干扰; 深度仍由模型决定)")
+                        help="只保留该类型对应的模型预测（不改写其他类型的评分）")
     parser.add_argument("--output", default="../logs/preview/latest_inspire_grasp.json")
     parser.add_argument("--intrinsics", default="../config/realsense_intrinsics.json")
     parser.add_argument("--calibration", default="../calibration/cam2flange_current.json",
                         help="眼在手上标定 JSON (cam2flange)，用于绘制法兰目标")
     parser.add_argument("--visualize", action="store_true", default=True)
+    parser.add_argument("--no-visualize", dest="visualize", action="store_false")
     parser.add_argument("--save_debug_scene", action="store_true")
     # ── Preprocessing ────────────────────────────────────────
     parser.add_argument("--preprocess", action="store_true",
@@ -170,6 +180,8 @@ def save_debug_scene(output_json, cloud, hand_mesh, two_finger_geom, frame):
 
 def main():
     args = parse_args()
+    if args.topk < 1 or args.candidate_limit < args.topk or args.collision_margin < 0:
+        raise ValueError("需满足 candidate-limit >= topk >= 1 且碰撞裕量非负")
     ri = import_robot_inspire(args)
     hand_model = args.hand_model or gc.load_hand_config().get("hand_model", "inspire")
     print(f"[手模型] {hand_model}"
@@ -180,16 +192,28 @@ def main():
     intrinsics = load_intrinsics(args.intrinsics)
     net = ri.get_net(args.checkpoint_path, use_v2=args.use_graspnet_v2)
     inspire_models = {} if args.random_grasp else ri.get_inspire_model(args.inspire_model_path)
-    meshes_pcls = ri.load_meshes_pointcloud(args.inspire_mesh_json_path) if args.collision else None
+    meshes_pcls = ri.load_meshes_pointcloud(args.inspire_mesh_json_path) \
+        if args.collision and hand_model == "inspire" else None
 
     print("[2/5] opening RealSense shared memory...")
     shm_depth = attach_shared_memory("realsense_depth")
     shm_color = attach_shared_memory("realsense_color")
+    shm_meta = None
 
     try:
         print("[3/5] running base grasp network...")
         t0 = time.time()
-        depths = ri.get_depth(shm_depth)
+        try:
+            shm_meta = attach_shared_memory(META_NAME)
+        except FileNotFoundError:
+            raise RuntimeError("请重启更新后的 realsense.py，以提供完整 RGB-D 快照")
+        observation = gp.load_observation(args.observation)
+        depths, colors, frame_info = read_snapshot(
+            np.ndarray((720, 1280), dtype=np.uint16, buffer=shm_depth.buf),
+            np.ndarray((720, 1280, 3), dtype=np.float32, buffer=shm_color.buf),
+            np.ndarray((2,), dtype=np.int64, buffer=shm_meta.buf))
+        if observation and frame_info["captured_at"] < observation["ready_at"]:
+            raise RuntimeError("相机图像早于观察位就绪时间，请稍后重新推理")
         valid = ((depths / 1000.0 > args.min_depth) & (depths / 1000.0 < args.max_depth)).sum()
         print(
             "depth stats:",
@@ -202,7 +226,7 @@ def main():
         ggarray, cloud, points_down, grasp_features, sinput = ri.get_grasp(
             net,
             depths,
-            shm_color,
+            SimpleNamespace(buf=colors),
             voxel_size=args.voxel_size,
             min_depth=args.min_depth,
             max_depth=args.max_depth,
@@ -247,6 +271,7 @@ def main():
             grasp_features_dic,
             ggarray,
             grasp_features=grasp_features,
+            fixed_type=args.fixed_type,
         )
 
         if not args.random_grasp:
@@ -260,9 +285,10 @@ def main():
             print(f"No Inspire grasp above score_thresh={args.score_thresh}.")
             return 4
 
-        if args.fixed_type is not None:
-            inspire_type = np.full_like(inspire_type, args.fixed_type)
-            print(f"[fixed-type] 抓取类型固定为 {args.fixed_type} (深度仍由模型决定)")
+        if hand_model == "own":
+            from own_preview import run
+            return run(args, ggarray, scores, inspire_type, inspire_depth, grasp_features,
+                       depths, colors, frame_info, observation, t0)
 
         two_fingers_ggarray = GraspGroup(ggarray)
         two_fingers_object_ids = ggarray[:, 16]
@@ -312,31 +338,10 @@ def main():
         chosen = inspire_ggarray[0]
         chosen_two_finger = two_fingers_ggarray[0]
 
-        # ── 自研手重锚定 (hand_model=own) ─────────────────────────
-        # 选型/碰撞/深度仍走 Inspire 管线(近似), 只替换"手放哪"的几何:
-        # 顶层 translation/rotation_matrix 语义 = 自研手 base_link 位姿。
-        # 执行器只消费这 4 个键, 其余字段照旧写出。
-        own_anchor = None
-        if hand_model == "own":
-            sys.path.insert(0, os.path.abspath(
-                os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "own_hand")))
-            import own_hand_grasp as ohg
-            t_base, R_base = ohg.base_pose_from_grasp(chosen_two_finger,
-                                                      int(chosen.grasp_type))
-            own_anchor = (t_base, R_base)
-            d_anchor = float(np.linalg.norm(
-                np.asarray(chosen.translation, dtype=float) - t_base))
-            print(f"[own] Type {int(chosen.grasp_type)} 重锚定: "
-                  f"与Inspire掌心位姿差 {d_anchor*1000:.1f}mm "
-                  f"(包络中心对准抓取点, 对向轴对齐开合轴)")
-
-        out_translation = own_anchor[0] if own_anchor else chosen.translation
-        out_rotation = own_anchor[1] if own_anchor else chosen.rotation_matrix
-
         result = {
             "score": float(chosen.score),
-            "translation": to_jsonable(out_translation),
-            "rotation_matrix": to_jsonable(out_rotation),
+            "translation": to_jsonable(chosen.translation),
+            "rotation_matrix": to_jsonable(chosen.rotation_matrix),
             "depth": float(chosen.depth),
             "width": float(chosen.width),
             "angle": to_jsonable(chosen.angle),
@@ -362,15 +367,9 @@ def main():
 
         if args.visualize or args.save_debug_scene:
             cloud = ensure_cloud(cloud, points_down).voxel_down_sample(max(args.voxel_size, 0.005))
-            if hand_model == "own":
-                hand_mesh = ohg.hand_mesh_at_grasp(
-                    chosen_two_finger, int(chosen.grasp_type),
-                    color=[1.0, 0.1, 0.1])
-                frame = make_grasp_frame(_PoseShim(out_translation, out_rotation))
-            else:
-                hand_mesh = chosen.load_mesh(args.inspire_mesh_json_path, chosen_two_finger)
-                hand_mesh.paint_uniform_color([1.0, 0.1, 0.1])
-                frame = make_grasp_frame(chosen)
+            hand_mesh = chosen.load_mesh(args.inspire_mesh_json_path, chosen_two_finger)
+            hand_mesh.paint_uniform_color([1.0, 0.1, 0.1])
+            frame = make_grasp_frame(chosen)
             world_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.12)
             try:
                 two_finger_geom = chosen_two_finger.to_open3d_geometry()
@@ -473,6 +472,8 @@ def main():
     finally:
         shm_depth.close()
         shm_color.close()
+        if shm_meta is not None:
+            shm_meta.close()
 
 
 if __name__ == "__main__":

@@ -9,6 +9,8 @@ from multiprocessing import shared_memory
 import numpy as np
 import cv2
 import os
+import time
+from camera_snapshot import META_NAME, META_SIZE
 
 DEBUG = True
 save_path = "capture_b06"
@@ -61,6 +63,9 @@ else:
 
 shm_depth = create_shared_memory('realsense_depth', depths.nbytes)
 depthbuf = np.ndarray(depths.shape, dtype=depths.dtype, buffer=shm_depth.buf)
+shm_meta = create_shared_memory(META_NAME, META_SIZE)
+metadata = np.ndarray((2,), dtype=np.int64, buffer=shm_meta.buf)
+metadata[:] = 0
 
 if DEBUG:
     colors = (cv2.cvtColor(colors, cv2.COLOR_BGR2RGB) / 255.0).astype(np.float32)
@@ -77,6 +82,7 @@ try:
         
         if DEBUG:
             colors, depths = camera.get_rgbd_image()
+            captured_ns = time.time_ns()
             cv2.imshow("RealSense D435i", colors)
             cv2.waitKey(1)
             colors = (cv2.cvtColor(colors, cv2.COLOR_BGR2RGB) / 255.0).astype(np.float32)
@@ -86,13 +92,21 @@ try:
 
             cnt += 1
             
+            metadata[0] += 1
             colorbuf[:] = colors[:]
             depthbuf[:] = depths[:]
+            metadata[1] = captured_ns
+            metadata[0] += 1
         else:
             print(shm_depth.name)
             depths = camera.get_depth_image()
-
+            metadata[0] += 1
             depthbuf[:] = depths[:]
+            metadata[1] = time.time_ns()
+            metadata[0] += 1
 except KeyboardInterrupt:
-    shm_depth.unlink()
-    shm_color.unlink()
+    pass
+finally:
+    for shm in [shm_depth, shm_meta] + ([shm_color] if DEBUG else []):
+        shm.close()
+        shm.unlink()

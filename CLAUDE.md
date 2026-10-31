@@ -34,14 +34,17 @@ conda activate anydex && cd scripts && python run_inspire_preview.py --visualize
 - `logs/` — 模型权重 + 推理输出
 
 ## 当前状态
+
+2026-10-31 更新：own 模式以 [docs/own_hand_pipeline.md](docs/own_hand_pipeline.md) 为准。新版使用自研手预塑形碰撞、统一法兰计划和多候选只读 IK；严格 MoveL 下降/上提，下降中 Space/Esc 中止回零，不进入人工接管。旧 JSON 不可直接用于演示执行；相机需新版帧元数据。下方历史实机记录不代表新版已经实机验证。
+
 - ✅ 阶段一 CGR 模型直接复用（权重: logs/model/checkpoint.tar.18）
 - ✅ 阶段二 Inspire 手决策模型复用（权重: logs/model/inspire_model/obj140）
 - ✅ 眼在手上推理管线打通（`anydex_eih_grasp.py` + `run_inspire_preview.py`）
 - ✅ workspace 滤波统一为 ±0.40（现役管线两处：`get_grasp` 默认参数 ±0.40 + 预览 `filter_grasp_group_by_z_axis` 经 CLI 参数化；`robot_inspire.py` 旧演示路径另有一处硬编码 0.4、不在现役 EIH 管线；点云 crop 层默认 ±0.5；注意 `filter_grasp_group_by_z_axis` 首参 0.4 实为 score 阈值，workspace 限幅靠 `ws_x/y_range` 关键字参数）
 - ✅ 点云预处理模块 `scripts/pointcloud_preprocess.py`（crop + RANSAC 桌面分割 + SOR 去噪，`--preprocess` 启用）
 - ✅ `realsense.py` 默认开启实时相机预览窗口
-- ✅ 演示循环抓取（默认行为，无 `--auto` 开关）：`anydex_eih_grasp.py` 集成 `hand_bridge.py`——接近后**空中先张手+预塑形**（`preshape()` 广播含拇指内旋，避免低空旋转撞桌）→**步进下降 12cm（可打断接管）**→抓取点逐指闭合（`close()`）→上提→丢弃位姿→松手→**`DROP_SETTLE_S`（demo 默认 1s）后自动回观测位姿循环下一轮**；仅 Ctrl+C/硬错误才回零下电退出
-- ✅ 每轮流程：仍按一次回车确认新抓取位姿，之后 Phase 2（接近→下降→闭合→上提→丢弃→松手）**全自动执行**，手部步骤用固定等待（`HAND_WAIT_S` 默认 3s，文件顶部常量）替代中间回车闸门；某轮失败（文件缺失/不可达）自动续轮不断电。下降中 **Space/Esc 暂停接管**人工微调（`_manual_takeover`，命令位姿基准、无记录）
+- ✅ 演示循环抓取（默认行为，无 `--auto` 开关）：`anydex_eih_grasp.py` 集成 `hand_bridge.py`——接近后**空中先张手+预塑形**（`preshape()` 广播含拇指内旋，避免低空旋转撞桌）→**严格 MoveL 步进下降 12cm（可中止回零）**→抓取点逐指闭合（`close()`）→上提→丢弃位姿→松手→**`DROP_SETTLE_S`（demo 默认 1s）后自动回观测位姿循环下一轮**；仅 Ctrl+C/硬错误才回零下电退出
+- ✅ 每轮流程：仍按一次回车确认新抓取位姿，之后 Phase 2（接近→下降→闭合→上提→丢弃→松手）**全自动执行**，手部步骤用固定等待（`HAND_WAIT_S` 默认 3s，文件顶部常量）替代中间回车闸门；某轮失败（文件缺失/不可达）自动续轮不断电。新版演示下降中 **Space/Esc 中止回零**；人工微调使用独立标定版
 - ✅ 两处人工确认闸门（标定版 `anydex_eih_grasp_calib.py` 保留）：闭合后、到达丢弃位姿后各需按一次回车才继续（防碰撞/防误丢）
 - ✅ 预塑形动作库 `PRESHAPE_LIBRARY`（数据驱动 8 种抓取类型，与 `controller_ub.py` 动作同名对应、参数各自独立）
 - ✅ 预塑形调试工具 `scripts/tools/test_hand_actions.py`（16 键直达 8 种类型：1-8 仅预塑形，Q-I 预塑形+闭合完整动作，O 张开）
